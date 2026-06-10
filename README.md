@@ -1,186 +1,232 @@
-# SD Artist Combo Tester
+# SD Artist Tester
 
-基于 Stable Diffusion WebUI API 的艺术家组合批量测试工具。
+Stable Diffusion WebUI API 绘图助手，围绕 artist combo 批量测试、自然语言出图、Agent 工具调用、Telegram Bot 和 WebUI 管理界面构建。
+
+项目适合用来：
+
+- 随机组合 artist tags 批量测试画风。
+- 用自然语言生成图片提示词并调用 SD WebUI 出图。
+- 通过 CLI/TUI、Telegram 或 WebUI 管理模型、LoRA、历史记录和生成结果。
+- 保存跨会话记忆、上一张图参数和最后一次生成信息，支持“完整提示词”“这张”“继续画”等上下文请求。
 
 ## 功能
 
-- 5 种采样模式（combo / single / pair / sequential / weighted）
-- 组合去重，跨运行不重复
-- 相似艺术家自动检测
-- 命令行界面，支持子命令
-- 生成记录持久化（JSON）
+- **Artist Combo**：支持 `combo`、`single`、`pair`、`sequential`、`weighted` 五种采样模式。
+- **自然语言出图**：`dream` 命令会分析角色、作品、标签、LoRA 和 artist 组合后生成图片。
+- **Agent Shell**：默认启动对话式 CLI，支持工具链、确认执行、记忆、模型管理和上下文续画。
+- **Prompt Choices**：绘图请求先给出多种可选构图/强度/场景方向，再按用户选择执行。
+- **Telegram Bot**：支持自然语言聊天、Inline Keyboard 选择、执行工具链并回传生成图片。
+- **WebUI**：提供浏览器控制台，用于聊天、生成、配置、LoRA、技能和统计查看。
+- **生成上下文**：保存 `last_generation`，可查询上一张图的完整 prompt、参数和输出目录。
+- **安全配置**：真实 `config.yaml`、会话、缓存和输出目录默认不提交，只发布 `config.example.yaml`。
 
 ## 环境要求
 
 - Python 3.10+
-- Stable Diffusion WebUI 运行中（默认端口 7860）
+- Stable Diffusion WebUI，并启用 API
+- 一个 OpenAI-compatible LLM 服务，用于自然语言规划和 prompt 生成
+- 可选：Telegram Bot Token
 
 ## 安装
 
 ```bash
-pip install requests pyyaml Pillow
-```
-
-## 快速开始
-
-```bash
-# 进入目录
+git clone https://github.com/sutanna233/sd_artist_tester.git
 cd sd_artist_tester
-
-# 直接运行（combo 模式，生成 10 张）
-python generate_artists.py run
-
-# 指定模式和数量
-python generate_artists.py run --mode single --num 50
+pip install -r requirements.txt
 ```
 
-## CLI 命令
-
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `run` | 生成图片 | `run --mode combo --num 20` |
-| `status` | 查看当前状态 | `status` |
-| `history` | 查看生成历史 | `history --last 10` |
-| `artists` | 艺术家列表 | `artists --search "sakura"` |
-| `config` | 配置管理 | `config set mode single` |
-| `clear` | 清理数据 | `clear history` |
-
-### run — 生成图片
-
-```bash
-python generate_artists.py run [选项]
-
-选项:
-  --mode    combo|single|pair|sequential|weighted   采样模式
-  --num N   生成数量
-  --resume  跳过已生成的组合（去重）
-  --no-dedup  本次运行关闭去重
-```
-
-**模式说明：**
-
-| 模式 | 说明 |
-|------|------|
-| `combo` | 每张图随机选 3-8 个艺术家组合（默认） |
-| `single` | 每个艺术家单独生成 |
-| `pair` | 两两配对 |
-| `sequential` | 按列表顺序分块（默认 5 个一组） |
-| `weighted` | 按权重采样（冷门优先） |
-
-### status — 查看状态
-
-```bash
-python generate_artists.py status
-# 输出: API、模式、去重、艺术家数、已生成组合数、历史运行记录
-```
-
-### history — 查看历史
-
-```bash
-python generate_artists.py history
-python generate_artists.py history --last 20
-python generate_artists.py history --search "sakura"
-```
-
-### artists — 艺术家管理
-
-```bash
-python generate_artists.py artists list          # 列出所有
-python generate_artists.py artists list --search "sak"  # 搜索
-python generate_artists.py artists count         # 数量
-python generate_artists.py artists gen           # 已生成过的
-```
-
-### config — 配置管理
-
-```bash
-python generate_artists.py config show                    # 显示全部配置
-python generate_artists.py config get mode                 # 获取单个值
-python generate_artists.py config set mode single          # 设置
-python generate_artists.py config set generation.steps 30  # 嵌套键
-python generate_artists.py config set generation.seed 1234 # 设为数字
-```
-
-### clear — 清理
-
-```bash
-python generate_artists.py clear history  # 清除去重历史
-python generate_artists.py clear outputs  # 清除所有生成的图片
-```
-
-## 配置文件
-
-复制示例配置后再填写本地密钥：
+准备本地配置：
 
 ```bash
 cp config.example.yaml config.yaml
 ```
 
-`config.yaml` 会被 `.gitignore` 排除，不要提交真实 API key、Telegram token 或本地会话数据。
+Windows PowerShell 可用：
 
-`config.yaml` 关键配置项：
+```powershell
+Copy-Item config.example.yaml config.yaml
+```
+
+然后编辑 `config.yaml`：
+
+- `sd_api.base_url`：Stable Diffusion WebUI API 地址，例如 `http://127.0.0.1:7860`
+- `llm.api_key` / `models.*.api_key`：对话模型密钥
+- `selection.chat`：默认对话模型 key
+- `telegram.token`：Telegram Bot Token，可留空
+
+`config.yaml` 已在 `.gitignore` 中排除，不要提交真实密钥。
+
+## 快速开始
+
+启动对话式 CLI：
+
+```bash
+python generate_artists.py shell
+```
+
+Windows 也可以直接运行：
+
+```bat
+run.bat
+```
+
+自然语言出图：
+
+```bash
+python generate_artists.py dream "画一个白发异色瞳的猫娘"
+```
+
+批量测试 artist combo：
+
+```bash
+python generate_artists.py run --mode combo --num 20
+```
+
+启动 WebUI：
+
+```bash
+python generate_artists.py webui --host 127.0.0.1 --port 7861
+```
+
+启动 Telegram Bot：
+
+```bash
+python generate_artists.py telegram start
+```
+
+## 常用命令
+
+| 命令 | 说明 | 示例 |
+| --- | --- | --- |
+| `shell` | 启动 Agent 对话 CLI | `python generate_artists.py shell` |
+| `dream` | 自然语言出图 | `python generate_artists.py dream "一张星尘头像"` |
+| `run` | 批量 artist combo 生成 | `python generate_artists.py run --mode single --num 10` |
+| `gallery` | 查看或重建画廊 | `python generate_artists.py gallery --regenerate` |
+| `history` | 查看生成历史 | `python generate_artists.py history --last 20` |
+| `artists` | 搜索 artist 列表 | `python generate_artists.py artists list --search sakura` |
+| `loras` | 查看或管理 LoRA | `python generate_artists.py loras list` |
+| `tags` | 搜索 Danbooru 标签 | `python generate_artists.py tags amiya --type character` |
+| `tagsite` | 查询角色提示词标签 | `python generate_artists.py tagsite "Amiya"` |
+| `llm` | 测试或查看 LLM | `python generate_artists.py llm status` |
+| `config` | 查看或修改配置 | `python generate_artists.py config get mode` |
+| `webui` | 启动 WebUI | `python generate_artists.py webui --port 7861` |
+| `telegram` | 管理 Telegram Bot | `python generate_artists.py telegram status` |
+| `clear` | 清理历史或输出 | `python generate_artists.py clear outputs` |
+
+## Agent 工作流
+
+`shell` 模式会启动苏丹娜 Agent。你可以直接输入自然语言，例如：
+
+```text
+画一张明日方舟的普瑞赛斯
+完整提示词给我一下
+这张再来 4 张
+现在用的什么模型
+列出我的记忆
+```
+
+Agent 会根据意图调用工具。绘图请求默认先给出 prompt choices，选择后再执行 `dream`。生成完成后会保存上一张图的结构化信息，因此“完整提示词”“这张”“上一张”“输出目录”等追问可以复用当前会话上下文。
+
+## Telegram Bot
+
+配置 `config.yaml`：
 
 ```yaml
-mode: "combo"          # combo | single | pair | sequential | weighted
-
-mode_config:
-  combo:
-    min_artists: 3
-    max_artists: 8
-
-sd_api:
-  base_url: "http://127.0.0.1:7860"
-  auth: null           # 或 "user:password"
-
-dedup:
-  enabled: true
-  similarity_filter: "strict"   # strict / off
-  allow_resample: false
-  history_file: "history.json"
-
-generation:
-  width: 512
-  height: 512
-  steps: 20
-  cfg_scale: 7
-  seed: -1
-  sampler: "Euler a"
-
-testing:
-  num_images: 10
-  retry: 2
-  continue_on_error: true
-
-output:
-  base_dir: "./outputs"
+telegram:
+  token: ""
+  allowed_users: []
+  auto_start: false
 ```
+
+启动：
+
+```bash
+python generate_artists.py telegram start
+```
+
+Telegram 支持：
+
+- 普通自然语言聊天和绘图请求。
+- Prompt choices inline keyboard。
+- 执行生成后回传图片文件。
+- 按 Telegram 用户隔离长期记忆命名空间。
+
+如果要限制使用者，把 Telegram user id 填入 `allowed_users`。
+
+## WebUI
+
+启动后访问：
+
+```text
+http://127.0.0.1:7861
+```
+
+WebUI 包含聊天、生成、批次、配置、LoRA、技能、artist 和统计页面。生成结果默认写入 `outputs/`，画廊文件由 `gallery` 命令或 WebUI 生成。
+
+## 配置说明
+
+核心配置来自 `config.yaml`：
+
+```yaml
+sd_api:
+  base_url: http://127.0.0.1:7860
+  auth: null
+
+llm:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  model: deepseek-v4-flash
+  api_key: ""
+
+models:
+  deepseek_deepseek-v4-flash:
+    provider: deepseek
+    base_url: https://api.deepseek.com
+    model: deepseek-v4-flash
+    api_key: ""
+    capabilities:
+      - chat
+
+selection:
+  chat: deepseek_deepseek-v4-flash
+```
+
+可按需添加更多 OpenAI-compatible 模型。`capabilities` 中包含 `chat` 表示可用于对话，包含 `vision` 表示可用于看图分析。
+
+## 输出与数据
+
+默认生成以下本地数据，均不建议提交：
+
+- `outputs/`：生成图片、prompt txt、`generation_log.json` 和画廊。
+- `history.json`：artist combo 去重历史。
+- `sessions.json`：Agent 会话、长期记忆、上一张图参数。
+- `tag_cache.json`：角色/标签查询缓存。
+- `lora_triggers.json`：本地 LoRA 触发词配置。
 
 ## 文件结构
 
-```
+```text
 sd_artist_tester/
-├── generate_artists.py   # 主程序
-├── config.example.yaml   # 配置模板
-├── config.yaml           # 本地配置（不提交）
-├── artists.txt           # 艺术家列表（每行一个）
-├── history.json          # 生成历史（自动生成）
-├── run.bat               # Windows 启动
-├── run.sh                # Linux 启动
-└── outputs/              # 生成结果
-    └── {timestamp}_{mode}_test/
-        ├── combo_001_*.png
-        ├── combo_001_*.txt
-        └── generation_log.json
+├── generate_artists.py      # 主入口和核心生成流程
+├── llm.py                   # LLM 客户端和 prompt 生成
+├── telegram_bot.py          # Telegram Bot
+├── webui.py                 # Flask WebUI
+├── agent/                   # Agent 路由、规划、验证、记忆、修复
+├── tools/                   # 可被 Agent 调用的工具实现
+├── templates/               # WebUI 模板
+├── static/                  # WebUI 静态资源
+├── artists.txt              # artist 列表
+├── config.example.yaml      # 配置模板
+└── requirements.txt         # Python 依赖
 ```
 
-## 艺术家列表格式
+## 安全注意
 
-`artists.txt` 每行一个艺术家 ID：
+- 不要提交 `config.yaml`、`sessions.json`、`outputs/` 或任何真实 token。
+- 如果 token 曾经发到聊天、日志或公开仓库，请立即撤销并重新生成。
+- 输出目录里会复制运行时配置，可能包含密钥，因此 `outputs/` 默认被忽略。
+- Telegram Bot 公开运行时建议设置 `allowed_users`。
 
-```
-kotomaru_(kotokoto_kottan)
-kawamochi_(kawauti919)
-yukitake_(bullfalk)
-```
+## License
 
-列表越大，可用组合越多。当前 7405 个艺术家。
+当前仓库未声明许可证。公开使用或二次分发前请自行补充合适的许可证文件。
