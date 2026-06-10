@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}艺术家 - SD Artist Tester{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>艺术家列表</h1>
+  <input id="search" type="text" placeholder="搜索...">
+  <span id="count-info" class="muted"></span>
+</div>
+<div id="artists-list" class="artists-list"></div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function load() {
+  const search = document.getElementById('search').value;
+  const r = await fetch('/api/artists?search=' + encodeURIComponent(search));
+  const data = await r.json();
+  document.getElementById('count-info').textContent = `共 ${data.total} 个`;
+  const html = data.artists.map(a => `<div class="artist-item">${a}</div>`).join('');
+  document.getElementById('artists-list').innerHTML = html || '<div class="muted">无结果</div>';
+}
+
+document.getElementById('search').addEventListener('input', debounce(load, 200));
+load();
+</script>
+{% endblock %}

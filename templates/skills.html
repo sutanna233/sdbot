@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Skills - SD Artist Tester{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Skill 管理</h1>
+  <input id="search" type="text" placeholder="搜索 skill...">
+  <button class="btn btn-primary" onclick="newSkill()">+ 新建 Skill</button>
+  <span id="count-info" class="muted"></span>
+</div>
+
+<div class="skills-layout">
+  <aside class="skills-list" id="skills-list"></aside>
+  <section class="skill-editor" id="skill-editor">
+    <div class="muted" style="padding:32px;text-align:center">← 从左侧选一个 skill 编辑，或点 "+ 新建 Skill"</div>
+  </section>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+let allSkills = [];
+let currentName = null;
+let dirty = false;
+
+async function load() {
+  const r = await fetch('/api/skills');
+  const data = await r.json();
+  allSkills = data.skills || [];
+  render();
+}
+
+function render() {
+  const search = (document.getElementById('search').value || '').toLowerCase();
+  const filtered = allSkills.filter(s =>
+    !search ||
+    s.name.toLowerCase().includes(search) ||
+    (s.description || '').toLowerCase().includes(search) ||
+    (s.triggers || []).some(t => (t || '').toLowerCase().includes(search))
+  );
+  document.getElementById('count-info').textContent = `共 ${allSkills.length} 个`;
+  const html = filtered.map(s => {
+    if (s.error) {
+      return `<div class="skill-item skill-item-error"><div class="skill-name">[错误] ${s.name}</div><div class="muted">${s.error}</div></div>`;
+    }
+    const trig = (s.triggers || []).slice(0, 3).join(', ');
+    const isCurrent = s.name === currentName;
+    return `
+      <div class="skill-item${isCurrent ? ' active' : ''}" onclick="select('${s.name}')">
+        <div class="skill-name">${s.name}${s.has_chain ? ' <span class="badge">chain</span>' : ''}</div>
+        <div class="skill-desc">${s.description || '<span class="muted">无描述</span>'}</div>
+        ${trig ? `<div class="skill-triggers muted">触发: ${trig}</div>` : ''}
+      </div>`;
+  }).join('');
+  document.getElementById('skills-list').innerHTML = html || '<div class="muted" style="padding:16px">无 skill</div>';
+}
+
+async function select(name) {
+  if (dirty && !confirm('当前编辑未保存，确定切换？')) return;
+  const r = await fetch('/api/skills/' + encodeURIComponent(name));
+  if (!r.ok) { toast('加载失败: ' + name); return; }
+  const data = await r.json();
+  currentName = name;
+  renderEditor(data);
+  render();
+  dirty = false;
+}
+
+function renderEditor(data) {
+  const editor = document.getElementById('skill-editor');
+  editor.innerHTML = `
+    <div class="editor-header">
+      <h2>${data.name}</h2>
+      <div>
+        <button class="btn btn-sm" onclick="save()">保存</button>
+        <button class="btn btn-sm btn-danger" onclick="del()">删除</button>
+      </div>
+    </div>
+    <label>名称 (字母数字下划线连字符)</label>
+    <input id="f-name" value="${data.name}" disabled>
+    <label>描述 (LLM 靠它匹配, 必填)</label>
+    <input id="f-desc" value="${(data.description || '').replace(/"/g, '&quot;')}">
+    <label>触发词 (逗号或换行分隔)</label>
+    <input id="f-triggers" value="${(data.triggers || []).join(', ').replace(/"/g, '&quot;')}">
+    <label>Chain 模板 (JSON 数组, 留空 = prompt-only)</label>
+    <textarea id="f-chain" rows="4" placeholder='[{"action": "dream", "params": {"description": "..."}}]'>${(data.chain_template || '').replace(/</g, '&lt;')}</textarea>
+    <label>正文 (Markdown)</label>
+    <textarea id="f-body" rows="10">${(data.body || '').replace(/</g, '&lt;')}</textarea>
+    <div class="muted" style="margin-top:8px">路径: <code>skills/${data.name}/SKILL.md</code></div>
+  `;
+  editor.querySelectorAll('input,textarea').forEach(el => {
+    el.addEventListener('input', () => { dirty = true; });
+  });
+}
+
+function getForm() {
+  const triggersRaw = document.getElementById('f-triggers').value || '';
+  const triggers = triggersRaw.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+  return {
+    description: document.getElementById('f-desc').value.trim(),
+    triggers,
+    chain_template: document.getElementById('f-chain').value.trim(),
+    body: document.getElementById('f-body').value,
+  };
+}
+
+async function save() {
+  if (!currentName) return;
+  const form = getForm();
+  const r = await fetch('/api/skills/' + encodeURIComponent(currentName), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(form),
+  });
+  const data = await r.json();
+  if (!r.ok) { toast('保存失败: ' + (data.error || '?')); return; }
+  toast('已保存: ' + currentName);
+  dirty = false;
+  load();
+}
+
+async function del() {
+  if (!currentName) return;
+  if (!confirm('确认删除 skill: ' + currentName + ' ?')) return;
+  const r = await fetch('/api/skills/' + encodeURIComponent(currentName), { method: 'DELETE' });
+  const data = await r.json();
+  if (!r.ok) { toast('删除失败: ' + (data.error || '?')); return; }
+  toast('已删除: ' + currentName);
+  currentName = null;
+  document.getElementById('skill-editor').innerHTML = '<div class="muted" style="padding:32px;text-align:center">已删除，从左侧选其他 skill 或新建</div>';
+  load();
+}
+
+function newSkill() {
+  if (dirty && !confirm('当前编辑未保存，确定新建？')) return;
+  const name = prompt('新 skill 名称 (字母数字下划线连字符):');
+  if (!name) return;
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) { toast('名称非法'); return; }
+  currentName = name;
+  renderEditor({
+    name,
+    description: '',
+    triggers: [],
+    chain_template: '',
+    body: '## 描述\n\n',
+  });
+  document.getElementById('f-name').disabled = false;
+  render();
+  dirty = true;
+}
+
+document.getElementById('search').addEventListener('input', debounce(render, 200));
+load();
+</script>
+{% endblock %}

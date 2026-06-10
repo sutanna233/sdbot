@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}批次 - SD Artist Tester{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>所有生成批次</h1>
+  <a class="btn btn-primary" href="{{ url_for('generate') }}">+ 新建生成</a>
+</div>
+<div class="toolbar">
+  <input id="search-input" type="text" placeholder="搜索批次名 / 提示词 / 艺术家...">
+  <select id="mode-filter">
+    <option value="all">全部模式</option>
+    <option value="combo">combo</option>
+    <option value="single">single</option>
+    <option value="pair">pair</option>
+    <option value="sequential">sequential</option>
+    <option value="weighted">weighted</option>
+  </select>
+  <select id="sort-select">
+    <option value="newest">最新优先</option>
+    <option value="oldest">最旧优先</option>
+    <option value="elapsed">耗时最长</option>
+    <option value="success">成功率</option>
+  </select>
+  <span id="count-info" class="muted"></span>
+</div>
+<div id="batches-grid" class="grid"></div>
+<div id="empty-state" class="empty" style="display:none">还没有任何批次</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+let allBatches = [];
+
+async function loadBatches() {
+  const search = document.getElementById('search-input').value;
+  const mode = document.getElementById('mode-filter').value;
+  const sort = document.getElementById('sort-select').value;
+  const r = await fetch(`/api/batches?search=${encodeURIComponent(search)}&mode=${mode}&sort=${sort}`);
+  const data = await r.json();
+  allBatches = data.batches;
+  document.getElementById('count-info').textContent = `共 ${data.total} 个批次`;
+  renderBatches();
+}
+
+function renderBatches() {
+  const grid = document.getElementById('batches-grid');
+  const empty = document.getElementById('empty-state');
+  if (!allBatches.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  grid.innerHTML = allBatches.map(b => {
+    const thumbUrl = b.thumb ? `/outputs/${b.name}/_thumbs/${b.thumb}` : '';
+    const ts = (b.timestamp || '').slice(0, 19).replace('T', ' ');
+    const successPct = b.total ? Math.round(b.success / b.total * 100) : 0;
+    return `
+      <div class="card batch-card">
+        <a href="/batch/${b.name}">
+          ${thumbUrl ? `<img src="${thumbUrl}" loading="lazy">` : '<div class="no-thumb">无图</div>'}
+        </a>
+        <div class="info">
+          <div class="batch-title"><a href="/batch/${b.name}">${b.name}</a></div>
+          <div class="batch-meta">${ts} | ${b.mode} | ${b.success}/${b.total} (${successPct}%) | ${b.elapsed}s</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteBatch('${b.name}')">删除</button>
+      </div>`;
+  }).join('');
+}
+
+async function deleteBatch(name) {
+  await fetch(`/api/batches/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  toast('已删除: ' + name);
+  loadBatches();
+}
+
+document.getElementById('search-input').addEventListener('input', debounce(loadBatches, 300));
+document.getElementById('mode-filter').addEventListener('change', loadBatches);
+document.getElementById('sort-select').addEventListener('change', loadBatches);
+
+loadBatches();
+</script>
+{% endblock %}

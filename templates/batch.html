@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} - 批次详情{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="{{ url_for('index') }}" class="back-link">← 返回</a>
+    <h1 id="batch-title">{{ name }}</h1>
+    <div id="batch-meta" class="muted"></div>
+  </div>
+  <div class="actions">
+    <button class="btn" onclick="regenerate()">重新生成画廊</button>
+    <button class="btn btn-danger" onclick="deleteBatch()">删除</button>
+  </div>
+</div>
+<div id="images-grid" class="grid"></div>
+<div id="empty-state" class="empty" style="display:none">没有图片</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const batchName = {{ name|tojson }};
+let allResults = [];
+
+async function loadBatch() {
+  const r = await fetch(`/api/batches/${encodeURIComponent(batchName)}`);
+  if (!r.ok) {
+    document.getElementById('images-grid').innerHTML = '<div class="empty">批次不存在</div>';
+    return;
+  }
+  const data = await r.json();
+  allResults = data.results.filter(x => x.success && x.image_url);
+  document.getElementById('batch-title').textContent = data.name;
+  const ts = (data.timestamp || '').slice(0, 19).replace('T', ' ');
+  document.getElementById('batch-meta').textContent = `${ts} | ${data.mode} | 耗时 ${data.elapsed}s`;
+  const grid = document.getElementById('images-grid');
+  if (!allResults.length) {
+    grid.innerHTML = '';
+    document.getElementById('empty-state').style.display = 'block';
+    return;
+  }
+  grid.innerHTML = allResults.map((r, i) => {
+    const artists = (r.artists || []).join(', ');
+    const prompt = r.prompt || '';
+    return `
+      <div class="card image-card">
+        <a href="${r.image_url}" target="_blank">
+          <img src="${r.thumb || r.image_url}" loading="lazy" onclick="event.preventDefault(); openLightbox(${i})">
+        </a>
+        <div class="info">
+          <div class="artists"><b>${i+1}.</b> ${artists}</div>
+          <details><summary>Prompt</summary><pre class="prompt">${escapeHtml(prompt)}</pre></details>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function regenerate() {
+  await fetch(`/api/batches/${encodeURIComponent(batchName)}/regenerate`, { method: 'POST' });
+  toast('画廊已重新生成');
+}
+
+async function deleteBatch() {
+  await fetch(`/api/batches/${encodeURIComponent(batchName)}`, { method: 'DELETE' });
+  toast('已删除');
+  window.location = '/';
+}
+
+function openLightbox(i) {
+  window.__lightbox = { items: allResults.map(r => ({url: r.image_url, meta: r})), idx: i };
+  showLightbox();
+}
+
+function showLightbox() {
+  const lb = window.__lightbox;
+  const item = lb.items[lb.idx];
+  document.getElementById('lightbox-img').src = item.url;
+  const m = item.meta;
+  document.getElementById('lightbox-info').innerHTML =
+    `<b>艺术家:</b> ${(m.artists||[]).join(', ')}<br><b>Prompt:</b> ${escapeHtml(m.prompt || '')}`;
+  document.getElementById('lightbox').style.display = 'flex';
+}
+
+function navigateLightbox(d) {
+  const lb = window.__lightbox;
+  if (!lb) return;
+  lb.idx = (lb.idx + d + lb.items.length) % lb.items.length;
+  showLightbox();
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').style.display = 'none';
+}
+
+document.addEventListener('keydown', e => {
+  if (document.getElementById('lightbox').style.display !== 'flex') return;
+  if (e.key === 'ArrowLeft') navigateLightbox(-1);
+  else if (e.key === 'ArrowRight') navigateLightbox(1);
+  else if (e.key === 'Escape') closeLightbox();
+});
+
+loadBatch();
+</script>
+{% endblock %}

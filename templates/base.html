@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}SD Artist Tester{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<nav class="topnav">
+  <div class="nav-inner">
+    <a class="brand" href="{{ url_for('index') }}">SD Artist Tester</a>
+    <a href="{{ url_for('chat') }}">对话</a>
+    <a href="{{ url_for('index') }}">批次</a>
+    <a href="{{ url_for('generate') }}">生成</a>
+    <a href="{{ url_for('loras') }}">LoRAs</a>
+    <a href="{{ url_for('artists') }}">艺术家</a>
+    <a href="{{ url_for('skills') }}">Skills</a>
+    <a href="{{ url_for('stats') }}">统计</a>
+    <a href="{{ url_for('config') }}">配置</a>
+  </div>
+</nav>
+<main class="container">
+  {% block content %}{% endblock %}
+</main>
+<div id="lightbox" class="lightbox" onclick="closeLightbox()">
+  <img id="lightbox-img" src="">
+  <div class="lightbox-info" id="lightbox-info"></div>
+  <button class="lightbox-prev" onclick="event.stopPropagation(); navigateLightbox(-1)">‹</button>
+  <button class="lightbox-next" onclick="event.stopPropagation(); navigateLightbox(1)">›</button>
+  <button class="lightbox-close" onclick="event.stopPropagation(); closeLightbox()">×</button>
+</div>
+<div id="toast" class="toast"></div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}生成 - SD Artist Tester{% endblock %}
+{% block content %}
+<h1>新建生成</h1>
+<div class="two-col">
+  <div class="card form-card">
+    <h2>描述</h2>
+    <textarea id="desc" rows="4" placeholder="猫娘，蓝色长发，偶像舞台..."></textarea>
+
+    <h2>参数</h2>
+    <div class="form-row">
+      <label>张数 <input id="num" type="number" value="1" min="1" max="20"></label>
+      <label>模式
+        <select id="mode">
+          <option value="combo">combo</option>
+          <option value="single">single</option>
+          <option value="pair">pair</option>
+          <option value="sequential">sequential</option>
+          <option value="weighted">weighted</option>
+        </select>
+      </label>
+    </div>
+    <div class="form-row">
+      <label>宽 <input id="width" type="number" value="1024"></label>
+      <label>高 <input id="height" type="number" value="1536"></label>
+    </div>
+    <div class="form-row">
+      <label>Steps <input id="steps" type="number" value="28"></label>
+      <label>CFG <input id="cfg" type="number" value="5" step="0.1"></label>
+      <label>Sampler <input id="sampler" type="text" value="Euler"></label>
+    </div>
+    <div class="form-row">
+      <label>最大 Tag 数 <input id="max_tags" type="number" placeholder="不限"></label>
+      <label>负提示词 <input id="neg" type="text" placeholder="留空用默认"></label>
+    </div>
+
+    <h2>LoRA</h2>
+    <div id="loras-list" class="loras-list">加载中...</div>
+
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="submitJob()">开始生成</button>
+      <button class="btn" onclick="document.getElementById('desc').value=''">清空</button>
+    </div>
+  </div>
+
+  <div class="card status-card">
+    <h2>任务状态</h2>
+    <div id="job-status" class="muted">空闲</div>
+    <div id="job-progress"></div>
+    <div id="job-preview"></div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+let allLoras = [];
+
+async function loadLoras() {
+  const r = await fetch('/api/loras');
+  const data = await r.json();
+  allLoras = data.loras;
+  renderLoras();
+}
+
+function renderLoras() {
+  const html = allLoras.map((l, i) => {
+    const triggerBadge = l.trigger
+      ? `<span class="badge ok">触发词: ${l.trigger}</span>`
+      : `<span class="badge warn">无触发词</span>`;
+    const disabled = l.trigger ? '' : 'disabled';
+    return `
+      <div class="lora-item">
+        <label>
+          <input type="checkbox" data-name="${l.name}" class="lora-check" ${disabled}>
+          <span class="lora-name">${l.name}</span>
+          ${triggerBadge}
+        </label>
+        <input type="number" class="lora-weight" data-name="${l.name}" value="0.8" step="0.1" min="0" max="2" ${disabled}>
+      </div>`;
+  }).join('');
+  document.getElementById('loras-list').innerHTML = html || '无可用 LoRA';
+}
+
+function getSelectedLoras() {
+  const out = [];
+  document.querySelectorAll('.lora-check:checked').forEach(cb => {
+    const name = cb.dataset.name;
+    const w = parseFloat(document.querySelector(`.lora-weight[data-name="${name}"]`).value);
+    out.push({ name, weight: w });
+  });
+  return out;
+}
+
+let pollInterval = null;
+
+async function submitJob() {
+  const desc = document.getElementById('desc').value.trim();
+  if (!desc) { toast('请输入描述'); return; }
+  const payload = {
+    description: desc,
+    num: parseInt(document.getElementById('num').value) || 1,
+    mode: document.getElementById('mode').value,
+    width: parseInt(document.getElementById('width').value),
+    height: parseInt(document.getElementById('height').value),
+    steps: parseInt(document.getElementById('steps').value),
+    cfg_scale: parseFloat(document.getElementById('cfg').value),
+    sampler: document.getElementById('sampler').value,
+    max_tags: document.getElementById('max_tags').value || null,
+    negative_prompt: document.getElementById('neg').value || null,
+    loras: getSelectedLoras(),
+  };
+  const btn = event.target;
+  btn.disabled = true;
+  document.getElementById('job-status').innerHTML = '<span class="muted">提交中...</span>';
+  try {
+    const r = await fetch('/api/generate/dream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    btn.disabled = false;
+    if (data.preview) {
+      const p = data.preview;
+      document.getElementById('job-preview').innerHTML = `
+        <h3>意图预览</h3>
+        <div><b>关键词:</b> ${(p.keywords || []).join(', ')}</div>
+        <div><b>角色:</b> ${(p.characters || []).join(', ') || '-'}</div>
+        <div><b>作品:</b> ${(p.copyrights || []).join(', ') || '-'}</div>
+        <div><b>风格:</b> ${p.style || '-'}</div>
+        <div><b>标签数:</b> ${p.tags_count}</div>
+        <details><summary>Prompt</summary><pre class="prompt">${escapeHtml(p.prompt || '')}</pre></details>`;
+    }
+    startPolling(data.job_id);
+  } catch (e) {
+    btn.disabled = false;
+    toast('错误: ' + e.message, 'error');
+  }
+}
+
+function startPolling(jobId) {
+  if (pollInterval) clearInterval(pollInterval);
+  const poll = async () => {
+    const r = await fetch('/api/jobs/' + jobId);
+    const j = await r.json();
+    if (j.status === 'completed') {
+      clearInterval(pollInterval);
+      document.getElementById('job-status').innerHTML = '<b>✓ 完成</b>';
+      toast('生成完成!');
+      if (j.result && j.result.batch_name) {
+        setTimeout(() => window.location = '/batch/' + j.result.batch_name, 1000);
+      }
+    } else if (j.status === 'failed') {
+      clearInterval(pollInterval);
+      document.getElementById('job-status').innerHTML = '<b>✗ 失败</b>: ' + escapeHtml(j.error || '');
+      toast('任务失败: ' + j.error, 'error');
+    } else {
+      const pct = j.progress || 0;
+      document.getElementById('job-status').innerHTML =
+        `<b>${j.status === 'queued' ? '排队中' : '运行中'}</b>: ${j.step} (${j.current}/${j.total})`;
+      document.getElementById('job-progress').innerHTML =
+        `<div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>`;
+    }
+  };
+  poll();
+  pollInterval = setInterval(poll, 2000);
+}
+
+loadLoras();
+</script>
+{% endblock %}

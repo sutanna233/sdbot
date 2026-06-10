@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}配置 - SD Artist Tester{% endblock %}
+{% block content %}
+<h1>配置</h1>
+<pre id="config-display" class="config-display"></pre>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function load() {
+  const r = await fetch('/api/config');
+  const data = await r.json();
+  document.getElementById('config-display').textContent = JSON.stringify(data, null, 2);
+}
+load();
+</script>
+{% endblock %}

@@ -1,0 +1,97 @@
+mode: combo
+
+artists:
+  list_file: artists.txt
+
+sd_api:
+  base_url: http://127.0.0.1:7860
+  auth: null
+
+llm:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  model: deepseek-v4-flash
+  api_key: ""
+
+vision:
+  provider: minimax
+  base_url: https://api.minimaxi.com/v1
+  model: MiniMax-M3
+  api_key: ""
+
+models:
+  deepseek_deepseek-v4-flash:
+    _key: deepseek_deepseek-v4-flash
+    provider: deepseek
+    base_url: https://api.deepseek.com
+    model: deepseek-v4-flash
+    api_key: ""
+    capabilities:
+      - chat
+    status: unknown
+    last_error: ""
+
+selection:
+  chat: deepseek_deepseek-v4-flash
+
+telegram:
+  token: ""
+  allowed_users: []
+  auto_start: false
+  proxy_url: null
+  connect_timeout: 20
+  read_timeout: 30
+  write_timeout: 30
+
+generation:
+  width: 1024
+  height: 1536
+  steps: 28
+  cfg_scale: 5
+  sampler: Euler
+  seed: -1
+
+prompt:
+  template: "{artists}, 1 girl, portrait, detailed, high quality"
+  negative: "text, watermark, worst quality, low quality, lowres, signature, username, logo, bad hands"
+
+mode_config:
+  combo:
+    min_artists: 3
+    max_artists: 8
+  single:
+    min_artists: 1
+    max_artists: 1
+  pair:
+    min_artists: 2
+    max_artists: 2
+  sequential:
+    chunk_size: 5
+  weighted:
+    weights_file: weights.yaml
+
+testing:
+  num_images: 10
+  min_artists: 3
+  max_artists: 8
+  retry: 2
+  continue_on_error: true
+
+dedup:
+  enabled: true
+  history_file: history.json
+  similarity_filter: strict
+  allow_resample: false
+
+danbooru:
+  base_url: https://danbooru.donmai.us
+  cache_file: tag_cache.json
+  max_results: 30
+
+output:
+  base_dir: ./outputs
+
+web:
+  timeout: 10
+  max_length: 50000
+  user_agent: Mozilla/5.0

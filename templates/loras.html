@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}LoRAs - SD Artist Tester{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>LoRA 管理</h1>
+  <input id="search" type="text" placeholder="搜索 LoRA...">
+</div>
+<table class="table" id="loras-table">
+  <thead><tr><th>名称</th><th>触发词</th><th>操作</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+{% endblock %}
+{% block scripts %}
+<script>
+let allLoras = [];
+
+async function load() {
+  const r = await fetch('/api/loras');
+  const data = await r.json();
+  allLoras = data.loras;
+  render();
+}
+
+function render() {
+  const search = document.getElementById('search').value.toLowerCase();
+  const filtered = allLoras.filter(l =>
+    !search || l.name.toLowerCase().includes(search) || (l.alias || '').toLowerCase().includes(search)
+  );
+  const tbody = document.querySelector('#loras-table tbody');
+  tbody.innerHTML = filtered.map(l => `
+    <tr>
+      <td>${l.name}</td>
+      <td><input type="text" class="trigger-input" data-name="${l.name}" value="${l.trigger || ''}" placeholder="未设置"></td>
+      <td>
+        <button class="btn btn-sm" onclick="saveTrigger('${l.name}')">保存</button>
+        <button class="btn btn-sm btn-danger" onclick="delTrigger('${l.name}')">删除</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function saveTrigger(name) {
+  const trigger = document.querySelector(`.trigger-input[data-name="${name}"]`).value.trim();
+  if (!trigger) { toast('触发词不能为空'); return; }
+  await fetch('/api/loras/trigger', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, trigger }),
+  });
+  toast('已保存: ' + name);
+  load();
+}
+
+async function delTrigger(name) {
+  await fetch('/api/loras/trigger/' + encodeURIComponent(name), { method: 'DELETE' });
+  toast('已删除触发词: ' + name);
+  load();
+}
+
+document.getElementById('search').addEventListener('input', debounce(render, 200));
+load();
+</script>
+{% endblock %}
