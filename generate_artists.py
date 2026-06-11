@@ -1016,7 +1016,7 @@ class SDArtistTester:
             sys.exit(1)
         out = self._create_output_dir()
         shutil.copy(self.config_path, out / "config.yaml")
-        print(f"\n{'=' * 55}\n  SD Artist Tester  |  API: {self.api_url}  Mode: {self.mode}"
+        print(f"\n{'=' * 55}\n  sdbot  |  API: {self.api_url}  Mode: {self.mode}"
               f"  Dedup: {'on' if self.dedup_enabled else 'off'}\n"
               f"  Artists: {len(artists)}  Images: {num}"
               + (f"  Per image: {self.mode_min}-{self.mode_max}" if self.mode in ("combo","weighted") else "")
@@ -2192,7 +2192,7 @@ chain_template: |
 
 ─── 创建方法 ───
 
-CLI:        python generate_artists.py skill_create ...
+CLI:        python sdbot.py skill_create ...
 Agent:      让苏丹娜说"创建一个 xxx skill ..."
 WebUI:      /skill_create (TODO)
 帮助:       /skill 打印本指南
@@ -3334,7 +3334,7 @@ WebUI:      /skill_create (TODO)
 # ── CLI ───────────────────────────────────────────────────────────
 
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="SD Artist Combo Tester")
+    p = argparse.ArgumentParser(description="sdbot - Stable Diffusion agent bot")
     sp = p.add_subparsers(dest="command")
 
     r = sp.add_parser("run", help="Run generation")

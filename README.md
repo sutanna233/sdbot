@@ -1,6 +1,6 @@
-# SD Artist Tester
+# sdbot
 
-Stable Diffusion WebUI API 绘图助手，围绕 artist combo 批量测试、自然语言出图、Agent 工具调用、Telegram Bot 和 WebUI 管理界面构建。
+sdbot 是一个 Stable Diffusion WebUI API 绘图助手，围绕 artist combo 批量测试、自然语言出图、Agent 工具调用、Telegram Bot 和 WebUI 管理界面构建。
 
 项目适合用来：
 
@@ -30,8 +30,8 @@ Stable Diffusion WebUI API 绘图助手，围绕 artist combo 批量测试、自
 ## 安装
 
 ```bash
-git clone https://github.com/sutanna233/sd_artist_tester.git
-cd sd_artist_tester
+git clone https://github.com/sutanna233/sdbot.git
+cd sdbot
 pip install -r requirements.txt
 ```
 
@@ -61,7 +61,7 @@ Copy-Item config.example.yaml config.yaml
 启动对话式 CLI：
 
 ```bash
-python generate_artists.py shell
+python sdbot.py shell
 ```
 
 Windows 也可以直接运行：
@@ -73,46 +73,46 @@ run.bat
 自然语言出图：
 
 ```bash
-python generate_artists.py dream "画一个白发异色瞳的猫娘"
+python sdbot.py dream "画一个白发异色瞳的猫娘"
 ```
 
 批量测试 artist combo：
 
 ```bash
-python generate_artists.py run --mode combo --num 20
+python sdbot.py run --mode combo --num 20
 ```
 
 启动 WebUI：
 
 ```bash
-python generate_artists.py webui --host 127.0.0.1 --port 7861
+python sdbot.py webui --host 127.0.0.1 --port 7861
 ```
 
 启动 Telegram Bot：
 
 ```bash
-python generate_artists.py telegram start
+python sdbot.py telegram start
 ```
 
 ## 常用命令
 
 | 命令 | 说明 | 示例 |
 | --- | --- | --- |
-| `shell` | 启动 Agent 对话 CLI | `python generate_artists.py shell` |
-| `dream` | 自然语言出图 | `python generate_artists.py dream "一张星尘头像"` |
-| `run` | 批量 artist combo 生成 | `python generate_artists.py run --mode single --num 10` |
-| `gallery` | 查看或重建画廊 | `python generate_artists.py gallery --regenerate` |
-| `history` | 查看生成历史 | `python generate_artists.py history --last 20` |
-| `artists` | 搜索 artist 列表 | `python generate_artists.py artists list --search sakura` |
-| `loras` | 查看或管理 LoRA | `python generate_artists.py loras list` |
-| `tags` | 搜索 Danbooru 标签 | `python generate_artists.py tags amiya --type character` |
-| `tagsite` | 查询角色提示词标签 | `python generate_artists.py tagsite "Amiya"` |
-| `llm` | 测试或查看 LLM | `python generate_artists.py llm status` |
-| `config` | 查看或修改配置 | `python generate_artists.py config get mode` |
-| `webui` | 启动 WebUI | `python generate_artists.py webui --port 7861` |
-| `telegram` | 管理 Telegram Bot | `python generate_artists.py telegram status` |
-| `update` | 检查或拉取 GitHub 更新 | `python generate_artists.py update --check` |
-| `clear` | 清理历史或输出 | `python generate_artists.py clear outputs` |
+| `shell` | 启动 Agent 对话 CLI | `python sdbot.py shell` |
+| `dream` | 自然语言出图 | `python sdbot.py dream "一张星尘头像"` |
+| `run` | 批量 artist combo 生成 | `python sdbot.py run --mode single --num 10` |
+| `gallery` | 查看或重建画廊 | `python sdbot.py gallery --regenerate` |
+| `history` | 查看生成历史 | `python sdbot.py history --last 20` |
+| `artists` | 搜索 artist 列表 | `python sdbot.py artists list --search sakura` |
+| `loras` | 查看或管理 LoRA | `python sdbot.py loras list` |
+| `tags` | 搜索 Danbooru 标签 | `python sdbot.py tags amiya --type character` |
+| `tagsite` | 查询角色提示词标签 | `python sdbot.py tagsite "Amiya"` |
+| `llm` | 测试或查看 LLM | `python sdbot.py llm status` |
+| `config` | 查看或修改配置 | `python sdbot.py config get mode` |
+| `webui` | 启动 WebUI | `python sdbot.py webui --port 7861` |
+| `telegram` | 管理 Telegram Bot | `python sdbot.py telegram status` |
+| `update` | 检查或拉取 GitHub 更新 | `python sdbot.py update --check` |
+| `clear` | 清理历史或输出 | `python sdbot.py clear outputs` |
 
 ## Agent 工作流
 
@@ -142,7 +142,7 @@ telegram:
 启动：
 
 ```bash
-python generate_artists.py telegram start
+python sdbot.py telegram start
 ```
 
 Telegram 支持：
@@ -169,19 +169,19 @@ WebUI 包含聊天、生成、批次、配置、LoRA、技能、artist 和统计
 本地仓库可以跟随 GitHub 远程仓库更新：
 
 ```bash
-python generate_artists.py update --check
+python sdbot.py update --check
 ```
 
 发现新提交后执行：
 
 ```bash
-python generate_artists.py update --apply
+python sdbot.py update --apply
 ```
 
 如果更新后还想同步 Python 依赖：
 
 ```bash
-python generate_artists.py update --apply --deps
+python sdbot.py update --apply --deps
 ```
 
 更新功能只使用 `git fetch` 和 `git pull --ff-only`，不会执行 `git reset --hard`，不会自动 stash，也不会覆盖 `config.yaml`、`sessions.json`、`outputs/` 等本地数据。工作区有未提交改动时会拒绝自动更新，避免覆盖你的本地修改。
@@ -240,8 +240,9 @@ selection:
 ## 文件结构
 
 ```text
-sd_artist_tester/
-├── generate_artists.py      # 主入口和核心生成流程
+sdbot/
+├── sdbot.py                 # 推荐启动入口
+├── generate_artists.py      # 兼容旧入口和核心生成流程
 ├── llm.py                   # LLM 客户端和 prompt 生成
 ├── telegram_bot.py          # Telegram Bot
 ├── webui.py                 # Flask WebUI

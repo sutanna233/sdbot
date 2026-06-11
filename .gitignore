@@ -17,6 +17,7 @@ _dream_artists.txt
 
 outputs/
 *.log
+*.baiduyun.uploading.cfg
 
 skills/*
 !skills/.gitkeep

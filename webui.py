@@ -669,7 +669,7 @@ def register_routes(app, job_queue):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="SD Artist Tester WebUI")
+    parser = argparse.ArgumentParser(description="sdbot WebUI")
     parser.add_argument("--port", type=int, default=7861)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
