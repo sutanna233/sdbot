@@ -1,4 +1,4 @@
-import os, sys, re, time, json, base64, shutil, random, hashlib, argparse, itertools
+import os, sys, re, time, json, base64, shutil, random, hashlib, argparse, itertools, subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +22,7 @@ from tools import (
     MemoryForgetTool, MemorySetTool, ModelsTool, SessionListTool,
     SessionNewTool, SessionRenameTool, SessionSwitchTool, StatusTool, TagSiteTool,
     TagsTool, TelegramTool, ToolExecutor, ToolRegistry, WebFetchTool, WebUITool,
-    RunTool, SkillCreateTool, SkillListTool, SkillLoadTool,
+    RunTool, SkillCreateTool, SkillListTool, SkillLoadTool, UpdateTool,
 )
 from cli_tui import TUIController
 
@@ -112,6 +112,7 @@ class SDArtistTester:
         self.tool_registry.register("critique", CritiqueTool(self))
         self.tool_registry.register("run", RunTool(self))
         self.tool_registry.register("tags", TagsTool(self))
+        self.tool_registry.register("update", UpdateTool(self))
         self.tool_registry.register("skill_list", SkillListTool(self))
         self.tool_registry.register("skill_load", SkillLoadTool(self))
         self.tool_registry.register("skill_create", SkillCreateTool(self))
@@ -1304,6 +1305,92 @@ class SDArtistTester:
             print(f"    {generation['negative_prompt']}")
         if run.get("run_dir"):
             print(f"  [生成] 批次目录: {run['run_dir']}")
+
+    def _git(self, args, check=False):
+        return subprocess.run(
+            ["git", *args],
+            cwd=self.script_dir,
+            text=True,
+            capture_output=True,
+            check=check,
+        )
+
+    def cmd_update(self, apply=False, deps=False, remote=None, branch=None):
+        update_conf = self.config.get("update", {})
+        remote = remote or update_conf.get("remote", "origin")
+        branch = branch or update_conf.get("branch", "main")
+
+        try:
+            inside = self._git(["rev-parse", "--is-inside-work-tree"])
+        except FileNotFoundError:
+            print("  [更新] 未找到 git，请先安装 Git")
+            return {"ok": False, "error": "git not found"}
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            print("  [更新] 当前目录不是 Git 仓库，无法自动更新")
+            return {"ok": False, "error": "not a git repository"}
+
+        remote_url = self._git(["remote", "get-url", remote])
+        if remote_url.returncode != 0:
+            print(f"  [更新] 未配置远程仓库: {remote}")
+            return {"ok": False, "error": f"missing remote: {remote}"}
+
+        print(f"  [更新] 拉取远程信息: {remote}/{branch}")
+        fetched = self._git(["fetch", remote, branch])
+        if fetched.returncode != 0:
+            err = (fetched.stderr or fetched.stdout or "fetch failed").strip()
+            print(f"  [更新] fetch 失败: {err}")
+            return {"ok": False, "error": err}
+
+        local = self._git(["rev-parse", "HEAD"])
+        upstream = self._git(["rev-parse", f"{remote}/{branch}"])
+        if local.returncode != 0 or upstream.returncode != 0:
+            print(f"  [更新] 无法解析 {remote}/{branch}")
+            return {"ok": False, "error": "cannot resolve revision"}
+        local_sha = local.stdout.strip()
+        upstream_sha = upstream.stdout.strip()
+
+        if local_sha == upstream_sha:
+            print("  [更新] 已是最新版本")
+            return {"ok": True, "updated": False, "local": local_sha, "remote": upstream_sha}
+
+        commits = self._git(["log", "--oneline", f"HEAD..{remote}/{branch}"])
+        print("  [更新] 发现新版本:")
+        for line in (commits.stdout or "").splitlines()[:20]:
+            print(f"    {line}")
+        if not apply:
+            print("  [更新] 仅检查更新；执行 update --apply 可拉取最新版本")
+            return {"ok": True, "updated": False, "available": True, "local": local_sha, "remote": upstream_sha}
+
+        status = self._git(["status", "--porcelain"])
+        dirty_lines = [line for line in status.stdout.splitlines() if line.strip()]
+        if dirty_lines:
+            print("  [更新] 工作区有未提交改动，拒绝自动更新。请先提交或备份:")
+            for line in dirty_lines[:30]:
+                print(f"    {line}")
+            return {"ok": False, "error": "working tree is dirty"}
+
+        print("  [更新] 执行快进更新...")
+        pulled = self._git(["pull", "--ff-only", remote, branch])
+        if pulled.returncode != 0:
+            err = (pulled.stderr or pulled.stdout or "pull failed").strip()
+            print(f"  [更新] 更新失败: {err}")
+            return {"ok": False, "error": err}
+        print((pulled.stdout or "").strip() or "  [更新] 更新完成")
+
+        if deps:
+            req = self.script_dir / "requirements.txt"
+            if req.exists():
+                print("  [更新] 更新 Python 依赖...")
+                dep = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-r", str(req)],
+                    cwd=self.script_dir,
+                    text=True,
+                )
+                if dep.returncode != 0:
+                    print("  [更新] 依赖更新失败，请手动执行 pip install -r requirements.txt")
+                    return {"ok": False, "error": "dependency update failed"}
+
+        return {"ok": True, "updated": True, "local": local_sha, "remote": upstream_sha}
 
     def _write_temp_artists(self, artists):
         path = self.script_dir / "_dream_artists.txt"
@@ -3231,6 +3318,13 @@ WebUI:      /skill_create (TODO)
             self.cmd_webui(host=getattr(args, "host", "127.0.0.1"), port=int(args.port))
         elif args.command == "telegram":
             self.cmd_telegram(action=args.action, token=getattr(args, "token", None))
+        elif args.command == "update":
+            self.cmd_update(
+                apply=getattr(args, "apply", False),
+                deps=getattr(args, "deps", False),
+                remote=getattr(args, "remote", None),
+                branch=getattr(args, "branch", None),
+            )
         elif args.command == "tagsite":
             self.cmd_tagsite(*args.names)
         elif args.command == "clear":
@@ -3298,6 +3392,13 @@ def parse_args(argv=None):
     tg.add_argument("action", nargs="?", default="status", choices=["start","stop","status"])
     tg.add_argument("--token", help="Override bot token")
 
+    up = sp.add_parser("update", help="Check or pull updates from GitHub")
+    up.add_argument("--check", action="store_true", help="Only check for updates (default)")
+    up.add_argument("--apply", action="store_true", help="Apply updates with git pull --ff-only")
+    up.add_argument("--deps", action="store_true", help="Run pip install -r requirements.txt after updating")
+    up.add_argument("--remote", help="Git remote name, default from config update.remote or origin")
+    up.add_argument("--branch", help="Git branch name, default from config update.branch or main")
+
     ts = sp.add_parser("tagsite", help="Search character tags from downloadmost.com")
     ts.add_argument("names", nargs="+", help="Character name(s)")
 
@@ -3308,7 +3409,7 @@ def parse_args(argv=None):
 def main():
     args = parse_args()
     tester = SDArtistTester()
-    if tester.config.get("telegram", {}).get("auto_start", False):
+    if args.command != "update" and tester.config.get("telegram", {}).get("auto_start", False):
         token = tester.config.get("telegram", {}).get("token", "")
         if token:
             tester.cmd_telegram(action="start")

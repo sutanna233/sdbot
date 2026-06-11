@@ -111,6 +111,7 @@ python generate_artists.py telegram start
 | `config` | 查看或修改配置 | `python generate_artists.py config get mode` |
 | `webui` | 启动 WebUI | `python generate_artists.py webui --port 7861` |
 | `telegram` | 管理 Telegram Bot | `python generate_artists.py telegram status` |
+| `update` | 检查或拉取 GitHub 更新 | `python generate_artists.py update --check` |
 | `clear` | 清理历史或输出 | `python generate_artists.py clear outputs` |
 
 ## Agent 工作流
@@ -162,6 +163,39 @@ http://127.0.0.1:7861
 ```
 
 WebUI 包含聊天、生成、批次、配置、LoRA、技能、artist 和统计页面。生成结果默认写入 `outputs/`，画廊文件由 `gallery` 命令或 WebUI 生成。
+
+## 自动更新
+
+本地仓库可以跟随 GitHub 远程仓库更新：
+
+```bash
+python generate_artists.py update --check
+```
+
+发现新提交后执行：
+
+```bash
+python generate_artists.py update --apply
+```
+
+如果更新后还想同步 Python 依赖：
+
+```bash
+python generate_artists.py update --apply --deps
+```
+
+更新功能只使用 `git fetch` 和 `git pull --ff-only`，不会执行 `git reset --hard`，不会自动 stash，也不会覆盖 `config.yaml`、`sessions.json`、`outputs/` 等本地数据。工作区有未提交改动时会拒绝自动更新，避免覆盖你的本地修改。
+
+可在 `config.yaml` 中配置默认远程和分支：
+
+```yaml
+update:
+  remote: origin
+  branch: main
+  check_on_start: false
+  auto_apply: false
+  update_dependencies: false
+```
 
 ## 配置说明
 

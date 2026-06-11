@@ -95,13 +95,13 @@ class LLMPlanner:
         if name == "tool_continue":
             return ["chat", "dream", "tagsite", "models", "add_provider", "file_read", "file_write", "web_fetch"]
         if name == "command":
-            return ["models", "add_provider", "status", "loras", "telegram", "webui", "gallery", "generation_info", "clear",
+            return ["models", "add_provider", "status", "loras", "telegram", "webui", "gallery", "generation_info", "update", "clear",
                      "history", "artists", "tagsite", "tags", "config_get", "config_set",
                      "session_list", "session_switch", "session_new", "skill_list", "skill_load",
                      "llm_status", "llm_test", "chat",
                      "memory_set", "memory_get", "memory_forget", "memory_list"]
         if name == "chat":
-            return ["chat", "status", "models", "gallery", "generation_info", "history", "loras", "telegram",
+            return ["chat", "status", "models", "gallery", "generation_info", "update", "history", "loras", "telegram",
                      "memory_set", "memory_get", "memory_forget", "memory_list"]
         return ["dream", "models", "add_provider", "tagsite", "loras", "status", "chat"]
 

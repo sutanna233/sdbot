@@ -95,3 +95,10 @@ web:
   timeout: 10
   max_length: 50000
   user_agent: Mozilla/5.0
+
+update:
+  remote: origin
+  branch: main
+  check_on_start: false
+  auto_apply: false
+  update_dependencies: false

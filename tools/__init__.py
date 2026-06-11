@@ -13,6 +13,7 @@ from .status import ArtistsTool, GalleryTool, HistoryTool, StatusTool, WebUITool
 from .tagsite import TagSiteTool
 from .tags import TagsTool
 from .telegram import TelegramTool
+from .update import UpdateTool
 from .vision import CritiqueTool
 from .web_fetch import WebFetchTool
 
@@ -23,6 +24,6 @@ __all__ = [
     "SessionNewTool", "SessionListTool", "SessionSwitchTool", "SessionRenameTool",
     "FileReadTool", "FileWriteTool", "FileListTool", "FileDeleteTool", "FileFindTool",
     "WebFetchTool", "CritiqueTool", "RunTool", "TagsTool", "GenerationInfoTool", "SkillListTool",
-    "SkillLoadTool", "SkillCreateTool",
+    "SkillLoadTool", "SkillCreateTool", "UpdateTool",
     "MemorySetTool", "MemoryGetTool", "MemoryForgetTool", "MemoryListTool",
 ]

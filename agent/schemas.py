@@ -153,6 +153,18 @@ TOOL_SCHEMAS = {
         "description": "启动 WebUI 控制界面。",
         "triggers": ["webui", "网页", "web界面"],
     },
+    "update": {
+        "required": [], "allowed_params": {"apply", "deps", "remote", "branch"}, "context_policy": "no_history",
+        "terminal": True,
+        "description": "检查或拉取 GitHub 远程仓库更新。apply=false 只检查；apply=true 执行 git pull --ff-only。",
+        "triggers": ["更新程序", "检查更新", "拉取更新", "升级", "update"],
+        "param_hints": {
+            "apply": "true 表示实际更新；false 或省略表示只检查。",
+            "deps": "true 表示更新后执行 pip install -r requirements.txt。默认 false。",
+            "remote": "Git remote 名称，默认 origin。",
+            "branch": "Git 分支，默认 main。",
+        },
+    },
     "config_get": {
         "required": ["key"], "allowed_params": {"key"}, "context_policy": "no_history",
         "terminal": True,

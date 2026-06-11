@@ -107,6 +107,8 @@ class IntentRouter:
             return Intent("command", slots={"sub_intent": "tagsite"})
         if any(k in lower for k in ("webui", "网页", "web界面")):
             return Intent("command", slots={"sub_intent": "webui"})
+        if "update" in lower or any(k in text for k in ("检查更新", "更新程序", "拉取更新", "升级程序", "同步仓库")):
+            return Intent("command", slots={"sub_intent": "update"})
         if any(k in text for k in ("完整提示词", "提示词", "生成参数", "输出目录", "输出文件夹", "刚才生成", "刚刚生成")):
             return Intent("command", slots={"sub_intent": "generation_info"})
         if "artist" in lower or "艺术家" in text:
