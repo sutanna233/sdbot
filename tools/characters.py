@@ -4,6 +4,7 @@ from datetime import datetime
 
 
 ALIAS_FILE = "character_aliases.json"
+WORK_ALIAS_FILE = "work_aliases.json"
 
 
 def _now():
@@ -14,7 +15,9 @@ class CharacterResolver:
     def __init__(self, host):
         self.host = host
         self.path = host.script_dir / ALIAS_FILE
+        self.work_path = host.script_dir / WORK_ALIAS_FILE
         self.aliases = self._load_aliases()
+        self.work_aliases = self._load_work_aliases()
 
     def resolve(self, request="", characters=None, works=None, tag_hints=None):
         request = str(request or "").strip()
@@ -69,9 +72,22 @@ class CharacterResolver:
         if work:
             self.aliases[self._alias_key(alias, work)] = record
         self._save_aliases()
+        self._learn_work_alias(tag, data)
         return {"ok": True, "alias": alias, "tag": tag, "work": work, "tags": data.get("tags", [])}
 
+    def _learn_work_alias(self, tag, data):
+        tag_list = data.get("tags") if data else []
+        for t in tag_list:
+            normalized = self._normalize(t)
+            if normalized not in self.work_aliases:
+                self.work_aliases[normalized] = tag
+                self._save_work_aliases()
+                return
+
     def _resolve_one(self, character, works, tag_hints):
+        works = [self._work_alias(w) or w for w in works]
+        tag_hints = [self._work_alias(t) or t for t in tag_hints]
+
         alias = self._alias_record(character, works)
         if alias:
             data = self._cache_lookup(alias["tag"]) or self.host.tag_site.search_character(alias["tag"])
@@ -83,6 +99,8 @@ class CharacterResolver:
                 return self._resolved(character, character, data, "exact_input", "high", self._matched_work(data, works))
 
         candidates = self._cache_candidates(character, works, tag_hints)
+        if not candidates:
+            candidates = self._danbooru_candidates(character, works)
         if not candidates:
             candidates = self._verified_llm_candidates(character, works)
         resolved = self._auto_resolve_candidate(character, candidates, works)
@@ -132,6 +150,41 @@ class CharacterResolver:
         candidates.sort(key=lambda c: c["score"], reverse=True)
         return candidates[:8]
 
+    def _danbooru_candidates(self, character, works):
+        danbooru = getattr(self.host, "danbooru", None)
+        if not danbooru or not hasattr(danbooru, "search_tags"):
+            return []
+        results = danbooru.search_tags(character)
+        if not results:
+            return []
+        work_keys = {self._normalize(w) for w in works}
+        seen = set()
+        candidates = []
+        for t in results:
+            key = self._normalize(t["name"])
+            if not key or key in seen:
+                continue
+            if t.get("type") not in ("character", None):
+                continue
+            seen.add(key)
+            data = self._cache_lookup(t["name"])
+            if not data:
+                data = self.host.tag_site.search_character(t["name"])
+            tag_list = data.get("tags") if data else []
+            work_match = self._tags_match_work(tag_list, work_keys)
+            score = 0.6 + (0.1 if t.get("count", 0) > 100 else 0) + (0.15 if work_match else 0)
+            candidates.append({
+                "tag": key,
+                "name": t["name"],
+                "work": self._matched_work(data, works) if data else None,
+                "score": round(min(score, 0.99), 2),
+                "reason": "danbooru_tag_search" + ("+work" if work_match else ""),
+                "evidence": {"post_count": t.get("count", 0), "source": "danbooru_api"},
+                "tags": tag_list[:20] if tag_list else [],
+            })
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        return candidates[:8]
+
     def _verified_llm_candidates(self, character, works):
         tags = self._llm_candidate_tags(character, works)
         candidates = []
@@ -167,19 +220,28 @@ class CharacterResolver:
             return None
         if works:
             matched = [c for c in candidates if c.get("work")]
-            if len(matched) != 1:
-                return None
-            item = matched[0]
-        else:
-            return None
-        return self._resolved(
-            character,
-            item.get("tag"),
-            {"name": item.get("name"), "tags": item.get("tags") or []},
-            item.get("reason", "candidate_verified"),
-            "high",
-            item.get("work"),
-        )
+            if len(matched) == 1:
+                item = matched[0]
+                return self._resolved(
+                    character, item.get("tag"),
+                    {"name": item.get("name"), "tags": item.get("tags") or []},
+                    item.get("reason", "candidate_verified"), "high", item.get("work"),
+                )
+        if len(candidates) == 1:
+            item = candidates[0]
+            return self._resolved(
+                character, item.get("tag"),
+                {"name": item.get("name"), "tags": item.get("tags") or []},
+                item.get("reason", "auto_single_candidate"), "medium", item.get("work"),
+            )
+        top = candidates[0]
+        if top.get("score", 0) >= 0.85 and (not candidates[1] or top["score"] - candidates[1].get("score", 0) >= 0.2):
+            return self._resolved(
+                character, top.get("tag"),
+                {"name": top.get("name"), "tags": top.get("tags") or []},
+                top.get("reason", "auto_high_score"), "high", top.get("work"),
+            )
+        return None
 
     def _llm_candidate_tags(self, character, works):
         llm_getter = getattr(self.host, "_llm", None)
@@ -222,6 +284,21 @@ class CharacterResolver:
             if record:
                 return record
         return self.aliases.get(self._normalize(character))
+
+    def _work_alias(self, name):
+        return self.work_aliases.get(self._normalize(name))
+
+    def _load_work_aliases(self):
+        if not self.work_path.exists():
+            return {}
+        try:
+            data = json.loads(self.work_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _save_work_aliases(self):
+        self.work_path.write_text(json.dumps(self.work_aliases, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _cache_lookup(self, tag):
         cache = getattr(self.host.tag_site, "_cache", {}) or {}

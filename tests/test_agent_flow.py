@@ -219,5 +219,164 @@ class AgentFlowTests(unittest.TestCase):
         self.assertEqual(result["action"], "gallery")
 
 
+    def test_danbooru_candidate_integration(self):
+        class LLM:
+            def agent_chat(self, system, conversation, user_input):
+                return {"candidates": []}
+
+        class TagSite:
+            def __init__(self):
+                self._cache = {}
+
+            def search_character(self, tag):
+                if tag == "amiya_(arknights)":
+                    return {"name": "amiya_(arknights)", "tags": ["amiya_(arknights)", "arknights", "1girl"]}
+                return None
+
+        class Danbooru:
+            def search_tags(self, keyword):
+                return [
+                    {"name": "amiya_(arknights)", "type": "character", "count": 500},
+                ]
+
+        class Host:
+            def __init__(self, root):
+                self.script_dir = Path(root)
+                self.tag_site = TagSite()
+                self.danbooru = Danbooru()
+
+            def _llm(self):
+                return LLM()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host(tmp)
+            host.character_resolver = CharacterResolver(host)
+            host.character_resolver.work_aliases["明日方舟"] = "arknights"
+            result = CharacterResolveTool(host)({"request": "amiya", "characters": ["阿米娅"], "works": ["明日方舟"]})
+            self.assertEqual(result["status"], "resolved")
+            self.assertEqual(result["resolved"][0]["tag"], "amiya_(arknights)")
+            self.assertIn("danbooru_tag_search", result["resolved"][0]["source"])
+
+    def test_danbooru_no_results_falls_through_to_llm(self):
+        class LLM:
+            def agent_chat(self, system, conversation, user_input):
+                return {"candidates": ["some_unknown_(work)"]}
+
+        class TagSite:
+            def __init__(self):
+                self._cache = {}
+
+            def search_character(self, tag):
+                if tag == "some_unknown_(work)":
+                    return {"name": "some_unknown_(work)", "tags": ["some_unknown_(work)", "arknights", "1girl"]}
+                return None
+
+        class Danbooru:
+            def search_tags(self, keyword):
+                return []
+
+        class Host:
+            def __init__(self, root):
+                self.script_dir = Path(root)
+                self.tag_site = TagSite()
+                self.danbooru = Danbooru()
+
+            def _llm(self):
+                return LLM()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host(tmp)
+            host.character_resolver = CharacterResolver(host)
+            result = CharacterResolveTool(host)({"request": "some unknown", "characters": ["未知"], "works": ["arknights"]})
+            self.assertEqual(result["status"], "resolved")
+            self.assertEqual(result["resolved"][0]["source"], "llm_candidate_verified+work")
+
+    def test_multi_candidate_returns_ambiguous(self):
+        class TagSite:
+            def __init__(self):
+                self._cache = {
+                    "amiya_(arknights)": {"ts": 1, "data": {"name": "amiya_(arknights)", "tags": ["amiya", "arknights"]}},
+                    "other_amiya_(work)": {"ts": 1, "data": {"name": "other_amiya_(work)", "tags": ["amiya", "arknights"]}},
+                }
+
+            def search_character(self, tag):
+                return None
+
+        class Host:
+            def __init__(self, root):
+                self.script_dir = Path(root)
+                self.tag_site = TagSite()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host(tmp)
+            host.character_resolver = CharacterResolver(host)
+            result = CharacterResolveTool(host)({"request": "amiya", "characters": ["amiya"], "works": []})
+            self.assertEqual(result["status"], "ambiguous")
+            self.assertTrue(len(result["candidates"]) >= 2)
+
+    def test_single_candidate_auto_resolve_without_work(self):
+        class TagSite:
+            def __init__(self):
+                self._cache = {
+                    "unique_char_(arknights)": {"ts": 1, "data": {"name": "unique_char_(arknights)", "tags": ["unique", "arknights"]}},
+                }
+
+            def search_character(self, tag):
+                return None
+
+        class Host:
+            def __init__(self, root):
+                self.script_dir = Path(root)
+                self.tag_site = TagSite()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host(tmp)
+            host.character_resolver = CharacterResolver(host)
+            result = CharacterResolveTool(host)({"request": "unique", "characters": ["unique"], "works": []})
+            self.assertEqual(result["status"], "resolved")
+            self.assertEqual(result["resolved"][0]["tag"], "unique_char_(arknights)")
+            self.assertEqual(result["resolved"][0]["source"], "cache_exact")
+
+    def test_work_alias_resolves_work_name(self):
+        class TagSite:
+            def __init__(self):
+                self._cache = {}
+
+            def search_character(self, tag):
+                return None
+
+        class Host:
+            def __init__(self, root):
+                self.script_dir = Path(root)
+                self.tag_site = TagSite()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host(tmp)
+            host.character_resolver = CharacterResolver(host)
+            host.character_resolver.work_aliases["明日方舟"] = "arknights"
+            result = CharacterResolveTool(host)({"request": "画明日方舟的泥岩", "characters": ["泥岩"], "works": ["明日方舟"]})
+            self.assertIn(result["status"], ("unresolved", "ambiguous"))
+
+    def test_no_candidate_returns_unresolved(self):
+        class TagSite:
+            def __init__(self):
+                self._cache = {}
+
+            def search_character(self, tag):
+                return None
+
+        class Host:
+            script_dir = None
+            tag_site = TagSite()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host()
+            host.script_dir = Path(tmp)
+            host.character_resolver = CharacterResolver(host)
+            result = CharacterResolveTool(host)({"request": "画一个不存在作品的不存在角色", "characters": ["完全不存在的角色"], "works": ["不存在作品"]})
+            self.assertEqual(result["status"], "unresolved")
+            self.assertEqual(result["unresolved"], ["完全不存在的角色"])
+
+
 if __name__ == "__main__":
     unittest.main()
