@@ -23,6 +23,12 @@ class TelegramBot:
         self._pending_choices = {}
         self._stop_event = threading.Event()
         self.last_error = ""
+        self._chat_locks = {}
+
+    def _get_lock(self, chat_id):
+        if chat_id not in self._chat_locks:
+            self._chat_locks[chat_id] = threading.Lock()
+        return self._chat_locks[chat_id]
 
     def _check_user(self, user_id):
         if not self.allowed_users:
@@ -131,30 +137,35 @@ class TelegramBot:
     async def _on_message(self, update, context):
         if not self._check_user(update.effective_user.id):
             return
-        user_text = update.message.text
-        msg = await update.message.reply_text("正在思考...")
-        try:
-            result = self.tester._agent_process(user_text, source="telegram", user_id=update.effective_user.id)
-            reply = result.get("reply", "")
-            choices = result.get("choices") or []
-            chain = self.tester._extract_chain(result)
-        except Exception as e:
-            await msg.edit_text(f"处理失败: {e}")
-            return
+        chat_id = update.effective_chat.id
+        with self._get_lock(chat_id):
+            user_text = update.message.text
+            msg = await update.message.reply_text("正在思考...")
+            try:
+                result = self.tester._agent_process(user_text, source="telegram", user_id=update.effective_user.id)
+                reply = result.get("reply", "")
+                choices = result.get("choices") or []
+                chain = self.tester._extract_chain(result)
+            except Exception as e:
+                await msg.edit_text(f"处理失败: {e}")
+                return
 
-        if choices:
-            full_text = (reply or "我理解你可能有几种处理方式：") + "\n\n" + self._format_choices(choices)
-            await msg.edit_text(full_text, reply_markup=self._build_choices_keyboard(choices))
-            return
+            if choices:
+                _, session = self.tester._session_current()
+                self.tester.agent.state.save_choices(session, user_text, choices)
+                self.tester._save_sessions()
+                full_text = (reply or "我理解你可能有几种处理方式：") + "\n\n" + self._format_choices(choices)
+                await msg.edit_text(full_text, reply_markup=self._build_choices_keyboard(choices))
+                return
 
-        if not chain:
-            await msg.edit_text(reply)
-            return
+            if not chain:
+                await msg.edit_text(reply)
+                return
 
-        chain_text = self._format_chain(chain)
-        full_text = f"{reply}\n\n{chain_text}" if reply else chain_text
-        keyboard = self._build_keyboard(chain)
-        await msg.edit_text(full_text, reply_markup=keyboard)
+            chain_text = self._format_chain(chain)
+            full_text = f"{reply}\n\n{chain_text}" if reply else chain_text
+            keyboard = self._build_keyboard(chain)
+            await msg.edit_text(full_text, reply_markup=keyboard)
 
     def _format_chain(self, chain):
         lines = []
@@ -202,72 +213,77 @@ class TelegramBot:
         query = update.callback_query
         await query.answer()
         data = query.data
-        parts = data.split("|", 1)
-        action = parts[0]
-        key_id = parts[1] if len(parts) > 1 else ""
+        chat_id = query.message.chat_id
+        with self._get_lock(chat_id):
+            parts = data.split("|", 1)
+            action = parts[0]
+            key_id = parts[1] if len(parts) > 1 else ""
 
-        if action in ("choice", "choice_cancel"):
-            sub = data.split("|")
-            choice_key = sub[1] if len(sub) > 1 else ""
-            choice_idx = int(sub[2]) if len(sub) > 2 and sub[2].isdigit() else -1
-            choices = self._pending_choices.pop(choice_key, None)
-            await query.edit_message_reply_markup(reply_markup=None)
-            if action == "choice_cancel" or not choices or choice_idx < 0 or choice_idx >= len(choices):
-                await query.edit_message_text((query.message.text or "") + "\n\n[已取消]")
-                return
-            choice = choices[choice_idx]
-            chain = choice.get("chain") or []
-            if not chain:
-                await query.edit_message_text((query.message.text or "") + "\n\n[选项无可执行步骤]")
-                return
-            try:
-                _, session = self.tester._session_current()
-                self.tester._save_last_dream_params_from_result({"chain": chain}, session)
-                self.tester._save_sessions()
-            except Exception:
-                pass
-            await query.edit_message_text(
-                (query.message.text or "").split("\n\n")[0]
-                + f"\n\n已选择：{choice.get('label', f'选项 {choice_idx + 1}')}\n任务已提交，执行中..."
-            )
-            thread = threading.Thread(
-                target=self._execute_chain_sync,
-                args=(query.message.chat_id, chain),
-                daemon=True,
-            )
-            thread.start()
-            return
-
-        chain = self._pending_chains.pop(key_id, None)
-
-        if action == "cancel" or not chain:
-            await query.edit_message_reply_markup(reply_markup=None)
-            if chain is None:
+            if action in ("choice", "choice_cancel"):
+                sub = data.split("|")
+                choice_key = sub[1] if len(sub) > 1 else ""
+                choice_idx = int(sub[2]) if len(sub) > 2 and sub[2].isdigit() else -1
+                choices = self._pending_choices.pop(choice_key, None)
+                await query.edit_message_reply_markup(reply_markup=None)
+                if action == "choice_cancel" or not choices or choice_idx < 0 or choice_idx >= len(choices):
+                    _, session = self.tester._session_current()
+                    self.tester.agent.state.mark_choice(session, cancelled=True)
+                    self.tester._save_sessions()
+                    await query.edit_message_text((query.message.text or "") + "\n\n[已取消]")
+                    return
+                choice = choices[choice_idx]
+                chain = choice.get("chain") or []
+                if not chain:
+                    await query.edit_message_text((query.message.text or "") + "\n\n[选项无可执行步骤]")
+                    return
+                try:
+                    _, session = self.tester._session_current()
+                    self.tester.agent.state.mark_choice(session, index=choice_idx, cancelled=False)
+                    self.tester._save_sessions()
+                except Exception:
+                    pass
                 await query.edit_message_text(
-                    (query.message.text or "") + "\n\n[已过期]",
+                    (query.message.text or "").split("\n\n")[0]
+                    + f"\n\n已选择：{choice.get('label', f'选项 {choice_idx + 1}')}\n任务已提交，执行中..."
                 )
-            return
+                thread = threading.Thread(
+                    target=self._execute_chain_sync,
+                    args=(chat_id, chain),
+                    daemon=True,
+                )
+                thread.start()
+                return
 
-        if action == "edit":
-            await query.edit_message_text(
-                (query.message.text or "").split("\n\n")[0]
-                + "\n\n请回复修改后的描述:"
-            )
-            context.user_data["editing_key"] = key_id
-            return
+            chain = self._pending_chains.pop(key_id, None)
 
-        if action == "exec":
-            await query.edit_message_reply_markup(reply_markup=None)
-            await query.edit_message_text(
-                (query.message.text or "").split("\n\n")[0]
-                + "\n\n任务已提交，执行中..."
-            )
-            thread = threading.Thread(
-                target=self._execute_chain_sync,
-                args=(query.message.chat_id, chain),
-                daemon=True,
-            )
-            thread.start()
+            if action == "cancel" or not chain:
+                await query.edit_message_reply_markup(reply_markup=None)
+                if chain is None:
+                    await query.edit_message_text(
+                        (query.message.text or "") + "\n\n[已过期]",
+                    )
+                return
+
+            if action == "edit":
+                await query.edit_message_text(
+                    (query.message.text or "").split("\n\n")[0]
+                    + "\n\n请回复修改后的描述:"
+                )
+                context.user_data["editing_key"] = key_id
+                return
+
+            if action == "exec":
+                await query.edit_message_reply_markup(reply_markup=None)
+                await query.edit_message_text(
+                    (query.message.text or "").split("\n\n")[0]
+                    + "\n\n任务已提交，执行中..."
+                )
+                thread = threading.Thread(
+                    target=self._execute_chain_sync,
+                    args=(chat_id, chain),
+                    daemon=True,
+                )
+                thread.start()
 
     def _execute_chain_sync(self, chat_id, chain):
         loop = self._loop
@@ -318,10 +334,12 @@ class TelegramBot:
 
         tool_results = []
         try:
+            _, session = self.tester._session_current()
             for i, step in enumerate(chain):
                 desc = self.tester._step_desc(step["action"], step.get("params", {}))
                 _run_coro(_send(f"[{i+1}/{len(chain)}] {desc}"))
-                action_result = self.tester._execute_action(step["action"], step.get("params", {}))
+                with self._get_lock(chat_id):
+                    action_result = self.tester._execute_action(step["action"], step.get("params", {}))
                 if not action_result.get("ok", True):
                     err = action_result.get("error") or action_result.get("summary") or "未知错误"
                     tool_results.append(f"[Tool Result] {step['action']}: 失败 - {err}")
@@ -331,10 +349,21 @@ class TelegramBot:
                     tool_results.append(f"[Tool Result] {step['action']}: {summary or '成功'}")
                     if summary:
                         _run_coro(_send(f"  ✓ {summary}"))
-                try:
-                    self.tester._inject_action_result(step, action_result)
-                except Exception:
-                    pass
+                with self._get_lock(chat_id):
+                    try:
+                        if step.get("action") == "dream" and isinstance(action_result, dict):
+                            gen = {"description": step.get("params", {}).get("description", ""),
+                                   "prompt": action_result.get("prompt", ""),
+                                   "params": step.get("params", {}),
+                                   "run": action_result.get("run")}
+                            self.tester.agent.state.save_generation(session, gen)
+                    except Exception:
+                        pass
+                    try:
+                        self.tester._inject_action_result(step, action_result)
+                    except Exception:
+                        pass
+                    self.tester._save_sessions()
 
             last_run = getattr(self.tester, "last_run_dir", None)
             if last_run:

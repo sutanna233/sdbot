@@ -12,18 +12,46 @@ class ContextBuilder:
         params = session.get("last_dream_params") or {}
         return dict(params) if isinstance(params, dict) else {}
 
-    def build(self, intent, user_input, session, conversation, use_context=None):
+    def build(self, intent, user_input, session, conversation, use_context=None, resolved=None):
+        state = session.get("conversation_state") or {}
+        data = {
+            "conversation_state": state,
+            "resolved_turn": resolved or {},
+            "last_dream_params": self.get_last_dream_params(session),
+            "last_generation": session.get("last_generation") or state.get("last_generation"),
+            "last_choices": state.get("last_choices"),
+            "last_search": state.get("last_search"),
+            "last_tool_result": state.get("last_tool_result"),
+        }
         if intent.name == "tool_continue":
-            return AgentContext("recent_tool_result", conversation[-6:], {})
+            return AgentContext("recent_tool_result", [], data)
         if intent.name == "add_provider":
-            return AgentContext("short_chat_history", conversation[-6:], {})
+            return AgentContext("short_chat_history", self._clean_recent(conversation, 6), data)
         if intent.name in ("continue_dream", "edit_dream"):
-            return AgentContext("last_dream_only", [], {"last_dream_params": self.get_last_dream_params(session)})
+            return AgentContext("last_dream_only", self._clean_recent(conversation, 4), data)
+        if intent.name == "contextual_followup":
+            return AgentContext("stateful_followup", self._clean_recent(conversation, 10), data)
         if intent.name == "chat" and (self.router.should_use_context(user_input) if use_context is None else use_context):
-            return AgentContext("short_chat_history", conversation[-6:], {})
-        return AgentContext("no_history", [], {})
+            return AgentContext("short_chat_history", self._clean_recent(conversation, 8), data)
+        if intent.name == "chat":
+            return AgentContext("short_chat_history", self._clean_recent(conversation, 4), data)
+        return AgentContext("no_history", [], data)
 
     def build_agent_input(self, intent, user_input, ctx):
+        if intent.name == "contextual_followup":
+            state_text = self.host.agent.state.render_for_prompt(
+                ctx.data.get("conversation_state") or {},
+                ctx.data.get("resolved_turn") or {},
+            )
+            return (
+                "[上下文解析]\n"
+                f"{state_text}\n"
+                "规则：用户这句话是上下文追问/反应/选择/修正，不要当作新的绘图请求。"
+                "优先根据 resolved_turn.refers_to 和 operation 处理。"
+                "如果 operation=explain，解释上一条助手回复；如果 operation=search_again，基于 last_search 继续；"
+                "如果 operation=modify_choices 或 modify，基于 active_task/last_choices 修改，不要反问对象。\n"
+                f"[用户请求]\n{user_input}"
+            )
         if intent.name not in ("continue_dream", "edit_dream"):
             return user_input
         last = ctx.data.get("last_dream_params") or {}
@@ -38,3 +66,14 @@ class ContextBuilder:
             "不要引入聊天历史中未出现在 last_dream_params 或当前请求里的主题。\n"
             f"[用户请求]\n{user_input}"
         )
+
+    def _clean_recent(self, conversation, count):
+        result = []
+        for item in reversed(conversation or []):
+            content = str(item.get("content", ""))
+            if content.startswith("[Tool Result") or "判断任务是否完成" in content:
+                continue
+            result.append(item)
+            if len(result) >= count:
+                break
+        return list(reversed(result))

@@ -2708,6 +2708,17 @@ WebUI:      /skill_create (TODO)
                 self._tui_or_print(f"链式: 第 {i}/{len(chain)} 步", "info")
             action_result = self._execute_action(step["action"], step.get("params", {}))
             self._inject_action_result(step, action_result)
+            if step.get("action") == "dream" and isinstance(action_result, dict):
+                try:
+                    _, session = self._session_current()
+                    gen = {"description": step.get("params", {}).get("description", ""),
+                           "prompt": action_result.get("prompt", ""),
+                           "params": step.get("params", {}),
+                           "run": action_result.get("run")}
+                    self.agent.state.save_generation(session, gen)
+                    self._save_sessions()
+                except Exception:
+                    pass
             if not action_result.get("ok", True):
                 self._tui_or_print(f"{step['action']} 执行失败: {action_result.get('error')}", "err")
                 return False
@@ -2729,11 +2740,20 @@ WebUI:      /skill_create (TODO)
             desc = choice.get("description") or ""
             print(f"  {i}. {label}" + (f" — {desc}" if desc else ""))
         try:
+            _, session = self._session_current()
+            self.agent.state.save_choices(session, "", choices)
+            self._save_sessions()
+        except Exception:
+            pass
+        try:
             ans = self.tui.ask("选择") if self.tui else input("  选择 [1-5 / n取消]: ").strip()
         except (EOFError, KeyboardInterrupt):
             self._tui_or_print("已取消", "info")
             return True
         if ans.lower() in ("n", "no", "q", "quit", "取消"):
+            _, session = self._session_current()
+            self.agent.state.mark_choice(session, cancelled=True)
+            self._save_sessions()
             self._tui_or_print("已取消", "info")
             return True
         try:
@@ -2748,6 +2768,12 @@ WebUI:      /skill_create (TODO)
         if not chain:
             self._tui_or_print("该选项没有可执行步骤", "warn")
             return True
+        try:
+            _, session = self._session_current()
+            self.agent.state.mark_choice(session, index=idx, cancelled=False)
+            self._save_sessions()
+        except Exception:
+            pass
         if not self._confirm_chain(chain):
             return True
         self._execute_chain_steps(chain)
@@ -2802,7 +2828,7 @@ WebUI:      /skill_create (TODO)
                 print(f"  [ERR] skill chain step 执行失败: {e}")
 
     def _inject_action_result(self, step, action_result):
-        """把 action 执行结果回写到 conversation, 供 LLM 下次决策参考."""
+        """把 action 执行结果回写到 conversation 和 tool_history, 供 LLM 下次决策参考."""
         sid, session = self._session_current()
         conv = session["conversation"]
         output_lines = action_result.get("output", [])
@@ -2819,9 +2845,9 @@ WebUI:      /skill_create (TODO)
             f"Status: {status}\n"
             f"Summary: {action_result.get('summary', '')}\n"
             f"Output (last {len(tail)} lines):\n{output}\n"
-            f"---\n"
-            f"判断任务是否完成。完成返回 {{\"action\": \"chat\", \"reply\": \"...\"}}；\n"
-            f"未完成则 chain 下一个动作继续执行。"
+            "---\n"
+            "判断任务是否完成。完成返回 {\"action\": \"chat\", \"reply\": \"...\"}；\n"
+            "未完成则 chain 下一个动作继续执行。"
         )
         conv.append({"role": "user", "content": msg[:2000]})
         conv.append({
@@ -2832,6 +2858,10 @@ WebUI:      /skill_create (TODO)
                 "params": {},
             }, ensure_ascii=False),
         })
+        try:
+            self.agent.state.save_tool_result(session, step, action_result)
+        except Exception:
+            pass
         self._save_sessions()
 
     def _react_loop(self, initial_input):
