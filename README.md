@@ -126,7 +126,7 @@ python sdbot.py telegram start
 列出我的记忆
 ```
 
-Agent 会根据意图调用工具。通用绘图请求会先给出 prompt choices，选择后再执行 `dream`；包含具体角色、人物或作品名的绘图请求会先用 `tagsite` 查询角色标签，再基于结构化查询结果生成 choices，避免未搜索就脑补角色设定。生成完成后会保存上一张图的结构化信息，因此“完整提示词”“这张”“上一张”“输出目录”等追问可以复用当前会话上下文。
+Agent 会根据意图调用工具。通用绘图请求会先给出 prompt choices，选择后再执行 `dream`；包含具体角色、人物或作品名的绘图请求会先用 `character_resolve` 做本地 alias / tag cache 解析。只有高置信解析后才会基于结构化标签生成 choices；低置信或同名角色会要求用户确认、提供 Danbooru tag，或选择按原描述直出，避免未确认就脑补角色设定。生成完成后会保存上一张图的结构化信息，因此“完整提示词”“这张”“上一张”“输出目录”等追问可以复用当前会话上下文。
 
 ## Telegram Bot
 
@@ -148,7 +148,7 @@ python sdbot.py telegram start
 Telegram 支持：
 
 - 普通自然语言聊天和绘图请求。
-- 具体角色绘图会先自动查询标签，再发送 Prompt choices inline keyboard。
+- 具体角色绘图会先做 alias / tag cache 解析，高置信时再发送 Prompt choices inline keyboard。
 - 执行生成后回传图片文件。
 - 按 Telegram 用户隔离长期记忆命名空间。
 
@@ -236,6 +236,7 @@ selection:
 - `sessions.json`：Agent 会话、长期记忆、上一张图参数。
 - `tag_cache.json`：角色/标签查询缓存。
 - `lora_triggers.json`：本地 LoRA 触发词配置。
+- `character_aliases.json`：用户确认过的角色别名到 Danbooru tag 的本地映射，不包含任何内置硬编码。
 
 ## 测试
 
@@ -245,7 +246,7 @@ selection:
 python -B -m unittest discover -s tests -v
 ```
 
-这些测试覆盖角色绘图的 `tagsite -> choices` 流程、choice 选择状态和 `tagsite` 结构化返回。
+这些测试覆盖角色绘图的 `character_resolve -> choices` 流程、choice 选择状态、`tagsite` 结构化返回和本地 alias 学习。
 
 ## 文件结构
 

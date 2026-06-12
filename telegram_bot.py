@@ -422,7 +422,7 @@ class TelegramBot:
     def _is_generation_research_chain(self, chain):
         if len(chain or []) != 1:
             return False
-        if chain[0].get("action") not in ("tagsite", "tags"):
+        if chain[0].get("action") not in ("character_resolve", "tagsite", "tags"):
             return False
         _, session = self.tester._session_current()
         task = (session.get("conversation_state") or {}).get("active_task") or {}

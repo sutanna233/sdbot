@@ -12,6 +12,7 @@ sessions.json.*.tmp
 history.json
 tag_cache.json
 lora_triggers.json
+character_aliases.json
 weights.yaml
 _dream_artists.txt
 

@@ -100,4 +100,4 @@ class AgentPipeline:
         if getattr(intent, "name", "") != "new_dream":
             return False
         chain = self.host._extract_chain(result)
-        return len(chain) == 1 and chain[0].get("action") in ("tagsite", "tags")
+        return len(chain) == 1 and chain[0].get("action") in ("character_resolve", "tagsite", "tags")

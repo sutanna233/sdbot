@@ -50,6 +50,8 @@ class ContextBuilder:
                 "如果 active_task.type=generation 且 status=research_done，必须基于搜索结果生成 prompt choices，"
                 "优先使用 last_tool_result.result.matches[].tags / result.tags 中的结构化标签；"
                 "不要再次搜索，不要直接 dream；未查到时不得脑补角色服装或设定。\n"
+                "如果 status=needs_character_confirmation，必须先让用户确认角色 tag、提供英文 tag，或选择按原描述直出；"
+                "不得生成姿势/构图类 prompt choices。\n"
                 f"[用户请求]\n{user_input}"
             )
         if intent.name == "contextual_followup":

@@ -45,6 +45,33 @@ TOOL_SCHEMAS = {
         "triggers": ["搜索角色", "查角色", "找角色", "查tag", "搜索标签"],
         "param_hints": {"names": "必填。角色/标签名称列表。"},
     },
+    "character_resolve": {
+        "required": ["request"],
+        "allowed_params": {"request", "characters", "works", "tag_hints"},
+        "context_policy": "no_history",
+        "terminal": True,
+        "description": "解析绘图请求中的角色/作品，并用本地已确认 alias 与 tag cache 给出高置信结果或候选；不做硬编码匹配。",
+        "triggers": ["解析角色", "角色消歧", "角色别名"],
+        "param_hints": {
+            "request": "原始用户绘图请求，必须完整保留。",
+            "characters": "可选。LLM 从请求中拆出的角色名列表；只放角色/人物，不放作品名。",
+            "works": "可选。作品名/系列名列表，只用于过滤候选，不作为 tagsite names。",
+            "tag_hints": "可选。用户明确提供的英文 tag 候选。低置信时仍需确认。",
+        },
+    },
+    "character_confirm": {
+        "required": ["alias", "tag"],
+        "allowed_params": {"alias", "tag", "work"},
+        "context_policy": "no_history",
+        "terminal": True,
+        "description": "用户确认某个角色别名对应 Danbooru tag 后，保存到本地 character_aliases.json。",
+        "triggers": ["就是", "对应", "确认角色", "记住角色"],
+        "param_hints": {
+            "alias": "用户使用的角色名/别名。",
+            "tag": "用户确认的 Danbooru 角色 tag。",
+            "work": "可选。作品名/系列名，用于同名角色消歧。",
+        },
+    },
     "add_provider": {
         "required": ["base_url"],
         "allowed_params": {"base_url", "api_key", "provider_name", "capabilities", "switch_role"},

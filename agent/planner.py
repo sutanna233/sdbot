@@ -54,9 +54,10 @@ class LLMPlanner:
         active = (state or {}).get("active_task") or {}
         has_pending_choices = bool((state or {}).get("last_choices")) and active.get("status") == "waiting_choice"
         has_researched_generation = name == "tool_continue" and active.get("type") == "generation" and active.get("status") == "research_done"
+        needs_character_confirmation = name == "tool_continue" and active.get("type") == "generation" and active.get("status") == "needs_character_confirmation"
         is_new_dream_op = name in ("new_dream", "edit_dream")
         is_pending_choice_followup = name == "contextual_followup" and has_pending_choices
-        if not is_new_dream_op and not is_pending_choice_followup and not has_researched_generation:
+        if not is_new_dream_op and not is_pending_choice_followup and not has_researched_generation and not needs_character_confirmation:
             return (
                 "短疑问、解释、情绪、搜索追问、模型/配置/状态问题不得返回 prompt choices，"
                 "也不得擅自执行 dream。\n\n"
@@ -65,8 +66,8 @@ class LLMPlanner:
         if name == "new_dream":
             research_rule = (
                 "如果绘图请求包含具体角色、人名、作品名或专有名词（例如某游戏/动画角色），"
-                "必须先返回单步 chain 调用 tagsite 搜索角色资料，不要直接返回 choices，也不要直接 dream。"
-                "tagsite.params.names 应只包含需要查询的角色/人物名；搜索结果回来后再基于工具结果生成 prompt choices。"
+                "必须先返回单步 chain 调用 character_resolve 解析角色，不要直接调用 tagsite，不要直接返回 choices，也不要直接 dream。"
+                "character_resolve.params.request 必须保留用户原文；characters 只放角色/人物名，works 只放作品/系列名。"
                 "如果只是通用主体（猫娘、少女、风景等）或用户已提供完整标签，则可以直接返回 choices。\n\n"
             )
         if has_researched_generation:
@@ -74,6 +75,12 @@ class LLMPlanner:
                 "当前已经完成角色/tag research。必须基于 conversation_state.last_tool_result 和 active_task.goal 生成 prompt choices，"
                 "优先使用 last_tool_result.result.matches[].tags / result.tags 中的结构化标签；"
                 "不要再次调用 tagsite，不要直接 dream；未查到时不得脑补角色服装或设定。\n\n"
+            )
+        if needs_character_confirmation:
+            return (
+                "角色解析没有高置信结果。必须先返回确认类 choices 或 chat 说明，不得返回构图/姿势类 prompt choices，不得直接 dream。"
+                "choices 可以包含：按原描述直出、让用户提供英文 Danbooru tag、或从 last_tool_result.result.candidates 中确认一个候选。"
+                "候选确认时使用 character_confirm；未确认前不要把候选当事实。\n\n"
             )
         return (
             research_rule
@@ -119,7 +126,7 @@ class LLMPlanner:
     def _schema_names_for_intent(self, intent):
         name = getattr(intent, "name", "") if intent else ""
         if name == "new_dream":
-            return ["dream", "tagsite", "loras", "skill_load", "chat"]
+            return ["character_resolve", "dream", "tagsite", "loras", "skill_load", "chat"]
         if name in ("continue_dream", "edit_dream"):
             return ["generation_info", "dream", "chat"]
         if name == "contextual_followup":
@@ -129,15 +136,16 @@ class LLMPlanner:
         if name == "add_provider":
             return ["add_provider", "models", "chat"]
         if name == "tool_continue":
-            return ["chat", "dream", "tagsite", "models", "add_provider", "file_read", "file_write", "web_fetch"]
+            return ["chat", "dream", "character_resolve", "character_confirm", "tagsite", "models", "add_provider", "file_read", "file_write", "web_fetch"]
         if name == "command":
             return ["models", "add_provider", "status", "loras", "telegram", "webui", "gallery", "generation_info", "update", "clear",
-                     "history", "artists", "tagsite", "tags", "config_get", "config_set",
+                     "history", "artists", "character_resolve", "character_confirm", "tagsite", "tags", "config_get", "config_set",
                      "session_list", "session_switch", "session_new", "skill_list", "skill_load",
                      "llm_status", "llm_test", "chat",
                      "memory_set", "memory_get", "memory_forget", "memory_list"]
         if name == "chat":
             return ["chat", "status", "models", "gallery", "generation_info", "update", "history", "loras", "telegram",
+                     "character_resolve", "character_confirm",
                      "memory_set", "memory_get", "memory_forget", "memory_list"]
         return ["dream", "models", "add_provider", "tagsite", "loras", "status", "chat"]
 

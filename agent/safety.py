@@ -11,6 +11,7 @@ ACTION_RISK = {
     "generation_info": "read",
     "tagsite": "read",
     "tags": "read",
+    "character_resolve": "read",
     "skill_list": "read",
     "session_list": "read",
     "llm_status": "read",
@@ -39,6 +40,7 @@ ACTION_RISK = {
     "memory_list": "read",
 
     "memory_set": "low",
+    "character_confirm": "low",
 
     "clear": "destructive",
     "file_delete": "destructive",

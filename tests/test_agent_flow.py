@@ -1,7 +1,10 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from agent.pipeline import AgentPipeline
 from agent.schemas import TOOL_SCHEMAS
+from tools.characters import CharacterConfirmTool, CharacterResolveTool, CharacterResolver
 from tools.tagsite import TagSiteTool
 
 
@@ -57,7 +60,7 @@ class FakeHost:
 class AgentFlowTests(unittest.TestCase):
     def test_character_dream_research_then_choices(self):
         host = FakeHost([
-            {"reply": "先查角色资料。", "chain": [{"action": "tagsite", "params": {"names": ["普瑞赛斯"]}}]},
+            {"reply": "先解析角色。", "chain": [{"action": "character_resolve", "params": {"request": "帮我画一个明日方舟的普瑞赛斯", "characters": ["普瑞赛斯"], "works": ["明日方舟"]}}]},
             {"reply": "查到资料后给你几个方向。", "choices": [
                 {"label": "原描述直出", "description": "保留原描述", "chain": [
                     {"action": "dream", "params": {"description": "明日方舟 普瑞赛斯 priestess_(arknights)"}}
@@ -66,7 +69,7 @@ class AgentFlowTests(unittest.TestCase):
         ])
 
         first = host.agent.process("帮我画一个明日方舟的普瑞赛斯")
-        self.assertEqual(host._extract_chain(first)[0]["action"], "tagsite")
+        self.assertEqual(host._extract_chain(first)[0]["action"], "character_resolve")
         self.assertEqual(host.session["conversation_state"]["active_task"]["status"], "researching")
 
         step = host._extract_chain(first)[0]
@@ -75,9 +78,13 @@ class AgentFlowTests(unittest.TestCase):
             "summary": "找到普瑞赛斯",
             "output": ["tags"],
             "result": {
-                "query": ["普瑞赛斯"],
-                "matches": [{"query": "普瑞赛斯", "name": "Priestess", "tags": ["priestess_(arknights)"], "tag_count": 1}],
-                "missing": [],
+                "request": "帮我画一个明日方舟的普瑞赛斯",
+                "characters": ["普瑞赛斯"],
+                "works": ["明日方舟"],
+                "status": "resolved",
+                "resolved": [{"input": "普瑞赛斯", "tag": "priestess_(arknights)", "name": "Priestess", "tags": ["priestess_(arknights)"], "tag_count": 1}],
+                "candidates": [],
+                "unresolved": [],
                 "tags": ["priestess_(arknights)"],
             },
         })
@@ -109,6 +116,48 @@ class AgentFlowTests(unittest.TestCase):
         result = TagSiteTool(Host())({"names": "amiya"})
         self.assertEqual(result["query"], ["amiya"])
         self.assertEqual(result["tags"], ["tag_a"])
+
+    def test_character_resolver_uses_confirmed_alias_without_hardcoding(self):
+        class TagSite:
+            def __init__(self):
+                self._cache = {}
+
+            def search_character(self, tag):
+                return {"name": tag, "tags": [tag, "work_tag"]}
+
+        class Host:
+            def __init__(self, root):
+                self.script_dir = Path(root)
+                self.tag_site = TagSite()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host(tmp)
+            host.character_resolver = CharacterResolver(host)
+            confirmed = CharacterConfirmTool(host)({"alias": "角色A", "tag": "role_a_(work)", "work": "作品A"})
+            self.assertTrue(confirmed["ok"])
+
+            result = CharacterResolveTool(host)({"request": "画作品A的角色A", "characters": ["角色A"], "works": ["作品A"]})
+            self.assertEqual(result["status"], "resolved")
+            self.assertEqual(result["resolved"][0]["tag"], "role_a_(work)")
+
+    def test_character_resolver_unresolved_does_not_guess(self):
+        class TagSite:
+            _cache = {}
+
+            def search_character(self, tag):
+                raise AssertionError("resolver should not call tagsite for unresolved non-tag input")
+
+        class Host:
+            script_dir = None
+            tag_site = TagSite()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host()
+            host.script_dir = Path(tmp)
+            host.character_resolver = CharacterResolver(host)
+            result = CharacterResolveTool(host)({"request": "画作品B的角色B", "characters": ["角色B"], "works": ["作品B"]})
+            self.assertEqual(result["status"], "unresolved")
+            self.assertEqual(result["unresolved"], ["角色B"])
 
 
 if __name__ == "__main__":

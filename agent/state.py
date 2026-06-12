@@ -11,6 +11,7 @@ class ConversationState:
     STATUS_RESEARCHING = "researching"
     STATUS_RESEARCH_DONE = "research_done"
     STATUS_RESEARCH_FAILED = "research_failed"
+    STATUS_NEEDS_CHARACTER_CONFIRMATION = "needs_character_confirmation"
     STATUS_WAITING_CHOICE = "waiting_choice"
     STATUS_EXECUTING = "executing"
     STATUS_COMPLETED = "completed"
@@ -174,7 +175,19 @@ class ConversationState:
         session.setdefault("tool_history", []).append(tool)
         session["tool_history"] = session["tool_history"][-20:]
         active = state.get("active_task") or {}
-        if action in ("tagsite", "tags"):
+        if action == "character_resolve":
+            resolve_status = result.get("status") if isinstance(result, dict) else None
+            if active.get("type") == "generation" and active.get("status") == self.STATUS_RESEARCHING:
+                active["status"] = self.STATUS_RESEARCH_DONE if resolve_status == "resolved" else self.STATUS_NEEDS_CHARACTER_CONFIRMATION
+                active["research"] = {
+                    "tool": action,
+                    "status": resolve_status or "unknown",
+                    "summary": summary,
+                    "created_at": _now(),
+                }
+                active["updated_at"] = _now()
+                state["active_task"] = active
+        elif action in ("tagsite", "tags"):
             query = params.get("names") or params.get("keyword") or ""
             state["last_search"] = {
                 "query": query,
@@ -298,6 +311,39 @@ class ConversationState:
     def _trim_result(self, result):
         if not isinstance(result, dict):
             return result
+        if "resolved" in result or "candidates" in result:
+            return {
+                "request": result.get("request"),
+                "characters": result.get("characters"),
+                "works": result.get("works"),
+                "status": result.get("status"),
+                "resolved": [
+                    {
+                        "input": item.get("input"),
+                        "tag": item.get("tag"),
+                        "name": item.get("name"),
+                        "work": item.get("work"),
+                        "confidence": item.get("confidence"),
+                        "tags": (item.get("tags") or [])[:80],
+                    }
+                    for item in (result.get("resolved") or [])[:5]
+                    if isinstance(item, dict)
+                ],
+                "candidates": [
+                    {
+                        "tag": item.get("tag"),
+                        "name": item.get("name"),
+                        "work": item.get("work"),
+                        "score": item.get("score"),
+                        "reason": item.get("reason"),
+                        "tags": (item.get("tags") or [])[:40],
+                    }
+                    for item in (result.get("candidates") or [])[:8]
+                    if isinstance(item, dict)
+                ],
+                "unresolved": result.get("unresolved"),
+                "tags": (result.get("tags") or [])[:80],
+            }
         if "matches" in result:
             copy = {
                 "query": result.get("query"),

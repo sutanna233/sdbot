@@ -16,7 +16,8 @@ from agent.chain_runner import ChainRunner
 from agent.safety import SafetyPolicy
 from agent.schemas import TOOL_SCHEMAS
 from tools import (
-    AddProviderTool, ArtistsTool, ClearTool, ConfigTool, CritiqueTool, DreamTool,
+    AddProviderTool, ArtistsTool, CharacterConfirmTool, CharacterResolveTool,
+    ClearTool, ConfigTool, CritiqueTool, DreamTool,
     FileDeleteTool, FileFindTool, FileListTool, FileReadTool, FileWriteTool,
     GenerationInfoTool,
     GalleryTool, HistoryTool, LLMTool, LorasTool, MemoryGetTool, MemoryListTool,
@@ -73,6 +74,8 @@ class SDArtistTester:
         self.lora_triggers_path = self.script_dir / "lora_triggers.json"
         self.lora_triggers = self._load_lora_triggers()
         self.tag_site = TagSite(self.script_dir)
+        from tools.characters import CharacterResolver
+        self.character_resolver = CharacterResolver(self)
         self.web = WebFetcher(self.config)
         self.last_run_dir = None
         self._telegram_bot = None
@@ -88,6 +91,8 @@ class SDArtistTester:
         self.tool_registry.register("models", ModelsTool(self))
         self.tool_registry.register("add_provider", AddProviderTool(self))
         self.tool_registry.register("tagsite", TagSiteTool(self))
+        self.tool_registry.register("character_resolve", CharacterResolveTool(self))
+        self.tool_registry.register("character_confirm", CharacterConfirmTool(self))
         self.tool_registry.register("loras", LorasTool(self))
         self.tool_registry.register("telegram", TelegramTool(self))
         self.tool_registry.register("status", StatusTool(self))
@@ -2530,7 +2535,7 @@ WebUI:      /skill_create (TODO)
             "- 用户说切换对话模型: action=models, params.action=switch, role=chat。\n"
             "- 用户说切换识图/视觉模型: action=models, params.action=switch, role=vision。\n"
             "- 用户说再画/继续/上一张加内容: 基于系统提供的结构化 last_dream_params 处理，不要从完整历史脑补。\n"
-            "- 具体角色/人物/作品绘图请求必须先用 tagsite 查角色资料；查完后再返回 prompt choices；不得在未搜索时脑补角色设定。\n"
+            "- 具体角色/人物/作品绘图请求必须先用 character_resolve 解析角色；高置信解析后再生成 choices；不得在未确认时脑补角色设定。\n"
             "- 不需要角色资料的绘图请求先返回 prompt choices；choices 的详细规则以当前 intent schema 为准。\n"
             "- 用户要求多个连续任务时才使用 chain；每次不要自动链式生成多个 dream，除非用户明确要求。\n"
             "- skill 明显匹配时先 skill_load，再继续 dream 或其他任务。\n\n"
@@ -3019,7 +3024,7 @@ WebUI:      /skill_create (TODO)
     def _is_generation_research_chain(self, chain):
         if len(chain or []) != 1:
             return False
-        if chain[0].get("action") not in ("tagsite", "tags"):
+        if chain[0].get("action") not in ("character_resolve", "tagsite", "tags"):
             return False
         _, session = self._session_current()
         task = (session.get("conversation_state") or {}).get("active_task") or {}

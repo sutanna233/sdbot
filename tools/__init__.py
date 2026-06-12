@@ -1,4 +1,5 @@
 from .config import ClearTool, ConfigTool, LLMTool
+from .characters import CharacterConfirmTool, CharacterResolveTool
 from .dream import DreamTool, GenerationInfoTool
 from .executor import ToolExecutor
 from .files import FileDeleteTool, FileFindTool, FileListTool, FileReadTool, FileWriteTool
@@ -19,6 +20,7 @@ from .web_fetch import WebFetchTool
 
 __all__ = [
     "ToolExecutor", "ToolRegistry", "DreamTool", "ModelsTool", "AddProviderTool",
+    "CharacterResolveTool", "CharacterConfirmTool",
     "TagSiteTool", "LorasTool", "TelegramTool", "StatusTool", "HistoryTool",
     "ArtistsTool", "GalleryTool", "WebUITool", "ConfigTool", "ClearTool", "LLMTool",
     "SessionNewTool", "SessionListTool", "SessionSwitchTool", "SessionRenameTool",
