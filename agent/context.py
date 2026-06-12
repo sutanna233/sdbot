@@ -38,6 +38,19 @@ class ContextBuilder:
         return AgentContext("no_history", [], data)
 
     def build_agent_input(self, intent, user_input, ctx):
+        if intent.name == "tool_continue":
+            state_text = self.host.agent.state.render_for_prompt(
+                ctx.data.get("conversation_state") or {},
+                ctx.data.get("resolved_turn") or {},
+            )
+            return (
+                "[工具输出上下文]\n"
+                f"{state_text}\n"
+                "规则：基于 last_tool_result 判断下一步。"
+                "如果 active_task.type=generation 且 status=research_done，必须基于搜索结果生成 prompt choices，"
+                "不要再次搜索，不要直接 dream。\n"
+                f"[用户请求]\n{user_input}"
+            )
         if intent.name == "contextual_followup":
             state_text = self.host.agent.state.render_for_prompt(
                 ctx.data.get("conversation_state") or {},

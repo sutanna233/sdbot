@@ -53,15 +53,31 @@ class LLMPlanner:
         state = (getattr(ctx, "data", {}) or {}).get("conversation_state") if ctx else {}
         active = (state or {}).get("active_task") or {}
         has_pending_choices = bool((state or {}).get("last_choices")) and active.get("status") == "waiting_choice"
+        has_researched_generation = name == "tool_continue" and active.get("type") == "generation" and active.get("status") == "research_done"
         is_new_dream_op = name in ("new_dream", "edit_dream")
         is_pending_choice_followup = name == "contextual_followup" and has_pending_choices
-        if not is_new_dream_op and not is_pending_choice_followup:
+        if not is_new_dream_op and not is_pending_choice_followup and not has_researched_generation:
             return (
                 "短疑问、解释、情绪、搜索追问、模型/配置/状态问题不得返回 prompt choices，"
                 "也不得擅自执行 dream。\n\n"
             )
+        research_rule = ""
+        if name == "new_dream":
+            research_rule = (
+                "如果绘图请求包含具体角色、人名、作品名或专有名词（例如某游戏/动画角色），"
+                "必须先返回单步 chain 调用 tagsite 搜索角色资料，不要直接返回 choices，也不要直接 dream。"
+                "tagsite.params.names 应只包含需要查询的角色/人物名；搜索结果回来后再基于工具结果生成 prompt choices。"
+                "如果只是通用主体（猫娘、少女、风景等）或用户已提供完整标签，则可以直接返回 choices。\n\n"
+            )
+        if has_researched_generation:
+            research_rule = (
+                "当前已经完成角色/tag research。必须基于 conversation_state.last_tool_result 和 active_task.goal 生成 prompt choices，"
+                "不要再次调用 tagsite，不要直接 dream。\n\n"
+            )
         return (
-            "明确绘图请求应先返回 prompt choices 让用户选择后再 dream，不得直接执行 dream。"
+            research_rule
+            +
+            "完成必要 research 后，明确绘图请求应返回 prompt choices 让用户选择后再 dream，不得直接执行 dream。"
             "NSFW/成人内容请求更必须先返回 choices；每项 choice 必须包含 label、description、chain；chain 使用上面列出的 action。\n\n"
             "prompt choices 应参考用户长期偏好，"
             "并且必须包含一个原描述直接生成/按原描述生成选项；该选项的 dream.description 尽量保留用户原始绘图请求，不要扩写、改写或套用长期偏好。"

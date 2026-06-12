@@ -26,7 +26,7 @@ class AgentPipeline:
         resolved = self.state.resolve(user_input, state)
 
         intent = self.router.route(user_input)
-        if resolved.get("turn", {}).get("kind") in ("followup", "explain", "reaction", "selection", "cancel", "retry", "correction"):
+        if intent.name != "tool_continue" and resolved.get("turn", {}).get("kind") in ("followup", "explain", "reaction", "selection", "cancel", "retry", "correction"):
             intent.name = "contextual_followup"
 
         ctx = self.context.build(intent, user_input, session, conv, use_context=use_context, resolved=resolved)
@@ -54,7 +54,10 @@ class AgentPipeline:
             }
         result = self.validator.validate_and_repair(intent, user_input, result, ctx)
         result = self.repair.repair(intent, user_input, result, ctx)
-        self.state.update_after_plan(session, user_input, result)
+        if self._is_research_chain(intent, result):
+            self.state.mark_researching(session, user_input, self.host._extract_chain(result)[0])
+        else:
+            self.state.update_after_plan(session, user_input, result)
         self.memory.append_turn(session, user_input, result)
         self.memory.check_summarize(session)
         self.host._save_sessions()
@@ -92,3 +95,9 @@ class AgentPipeline:
         action = result.get("action")
         reply = str(result.get("reply") or "").strip()
         return action in (None, "", "chat") and not reply
+
+    def _is_research_chain(self, intent, result):
+        if getattr(intent, "name", "") != "new_dream":
+            return False
+        chain = self.host._extract_chain(result)
+        return len(chain) == 1 and chain[0].get("action") in ("tagsite", "tags")

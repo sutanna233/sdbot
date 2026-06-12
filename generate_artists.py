@@ -2502,7 +2502,8 @@ WebUI:      /skill_create (TODO)
             "- 用户说切换对话模型: action=models, params.action=switch, role=chat。\n"
             "- 用户说切换识图/视觉模型: action=models, params.action=switch, role=vision。\n"
             "- 用户说再画/继续/上一张加内容: 基于系统提供的结构化 last_dream_params 处理，不要从完整历史脑补。\n"
-            "- 所有绘图请求（不论明确与否）都必须先返回 prompt choices 让用户选择后再 dream，不得直接执行 dream。\n"
+            "- 具体角色/人物/作品绘图请求必须先用 tagsite 查角色资料；查完后再返回 prompt choices；不得在未搜索时脑补角色设定。\n"
+            "- 不需要角色资料的绘图请求必须先返回 prompt choices 让用户选择后再 dream，不得直接执行 dream。\n"
             "- NSFW/成人内容请求更必须先返回 choices；每个 choice 必须包含 label、description、chain；chain 使用可用操作中的 action。\n"
             "- choices 应覆盖合理方向，例如查看信息/诊断原因/继续生成/构思方案；不要把所有选项都做成生成；绘图请求至少返回 2-4 个 prompt choices。\n"
             "- prompt choices 必须包含一个“原描述直接生成/按原描述生成”选项；该选项的 dream.params.description 必须尽量保留用户原始绘图请求，不要扩写、不要改写、不要套用长期偏好。\n"
@@ -2961,7 +2962,8 @@ WebUI:      /skill_create (TODO)
                 self._tui_or_print("LLM 似乎卡在同一个任务, 请用更明确指令重新发起", "warn")
                 return
 
-            if not self._confirm_chain(chain):
+            auto_research = self._is_generation_research_chain(chain)
+            if not auto_research and not self._confirm_chain(chain):
                 return
 
             for i, step in enumerate(chain, 1):
@@ -2972,7 +2974,7 @@ WebUI:      /skill_create (TODO)
                 if not action_result.get("ok", True):
                     self._tui_or_print(f"{step['action']} 执行失败: {action_result.get('error')}", "err")
                     return
-                if len(chain) == 1 and self._should_end_after_single_tool(step, action_result):
+                if len(chain) == 1 and not auto_research and self._should_end_after_single_tool(step, action_result):
                     return
                 # 如果该步是 skill_load 且排出了 pending chain:
                 # - 把 skill 的 loras 注入到 LLM 剩余 dream 步骤中
@@ -2997,8 +2999,17 @@ WebUI:      /skill_create (TODO)
                     self._pending_skill_chain = remaining
                     self._tui_or_print(f"skill-chain 注入 loras 到 {len(remaining)} 步, 保留 LLM chain 步骤数", "info")
                     break
-            if self._should_end_after_chain(chain):
+            if not auto_research and self._should_end_after_chain(chain):
                 return
+
+    def _is_generation_research_chain(self, chain):
+        if len(chain or []) != 1:
+            return False
+        if chain[0].get("action") not in ("tagsite", "tags"):
+            return False
+        _, session = self._session_current()
+        task = (session.get("conversation_state") or {}).get("active_task") or {}
+        return task.get("type") == "generation" and task.get("status") == "researching"
 
     def _to_int(self, v, default):
         if v is None:

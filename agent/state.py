@@ -97,7 +97,7 @@ class ConversationState:
                     "cancelled": False,
                     "created_at": _now(),
                 }
-                state["active_task"] = self._task_from_result(user_input, result, status="waiting_choice")
+                state["active_task"] = self._task_from_choices(user_input, choices, "waiting_choice")
             else:
                 task = self._task_from_result(user_input, result, status="planning")
                 if task:
@@ -162,6 +162,7 @@ class ConversationState:
         state["last_tool_result"] = tool
         session.setdefault("tool_history", []).append(tool)
         session["tool_history"] = session["tool_history"][-20:]
+        active = state.get("active_task") or {}
         if action in ("tagsite", "tags"):
             query = params.get("names") or params.get("keyword") or ""
             state["last_search"] = {
@@ -171,14 +172,34 @@ class ConversationState:
                 "summary": summary,
                 "created_at": _now(),
             }
-            state["active_task"] = {
-                "type": "search",
-                "goal": "搜索信息",
-                "subject": query,
-                "constraints": {},
-                "status": "completed" if tool["ok"] else "failed",
-                "updated_at": _now(),
-            }
+            if active.get("type") == "generation" and active.get("status") == "researching":
+                active["status"] = "research_done" if tool["ok"] else "research_failed"
+                active["research"] = state["last_search"]
+                active["updated_at"] = _now()
+                state["active_task"] = active
+            else:
+                state["active_task"] = {
+                    "type": "search",
+                    "goal": "搜索信息",
+                    "subject": query,
+                    "constraints": {},
+                    "status": "completed" if tool["ok"] else "failed",
+                    "updated_at": _now(),
+                }
+        session["conversation_state"] = state
+
+    def mark_researching(self, session, user_input, step):
+        state = self.get(session)
+        params = step.get("params", {}) if isinstance(step, dict) else {}
+        state["active_task"] = {
+            "type": "generation",
+            "goal": str(user_input or ""),
+            "subject": params.get("names") or str(user_input or ""),
+            "constraints": {},
+            "status": "researching",
+            "created_at": _now(),
+            "updated_at": _now(),
+        }
         session["conversation_state"] = state
 
     def _is_emoji_only(self, text):

@@ -162,6 +162,16 @@ class TelegramBot:
                 await msg.edit_text(reply)
                 return
 
+            if self._is_generation_research_chain(chain):
+                await msg.edit_text((reply or "正在查询角色资料...") + "\n\n查询完成后我会给你可选构图。")
+                thread = threading.Thread(
+                    target=self._execute_research_then_reply_sync,
+                    args=(chat_id, chain, user_text),
+                    daemon=True,
+                )
+                thread.start()
+                return
+
             chain_text = self._format_chain(chain)
             full_text = f"{reply}\n\n{chain_text}" if reply else chain_text
             keyboard = self._build_keyboard(chain)
@@ -379,3 +389,53 @@ class TelegramBot:
                 pass
         finally:
             pass
+
+    def _execute_research_then_reply_sync(self, chat_id, chain, original_text):
+        loop = self._loop
+        bot = self.application.bot
+
+        def _run_coro(coro):
+            fut = asyncio.run_coroutine_threadsafe(coro, loop)
+            return fut.result(timeout=120)
+
+        try:
+            with self._get_lock(chat_id):
+                for step in chain:
+                    action_result = self.tester._execute_action(step["action"], step.get("params", {}))
+                    self.tester._inject_action_result(step, action_result)
+                    if not action_result.get("ok", True):
+                        err = action_result.get("error") or action_result.get("summary") or "未知错误"
+                        _run_coro(bot.send_message(chat_id, f"角色资料查询失败: {err}"))
+                        return
+                result = self.tester._agent_process(
+                    "继续。基于上一步的工具输出决定下一步。",
+                    source="tool_result",
+                )
+            reply = result.get("reply", "") if isinstance(result, dict) else ""
+            choices = result.get("choices") if isinstance(result, dict) else []
+            chain2 = self.tester._extract_chain(result) if isinstance(result, dict) else []
+            if choices:
+                _, session = self.tester._session_current()
+                self.tester.agent.state.save_choices(session, original_text, choices)
+                self.tester._save_sessions()
+                full_text = (reply or "我查到资料后整理了几个方向：") + "\n\n" + self._format_choices(choices)
+                _run_coro(bot.send_message(chat_id, full_text, reply_markup=self._build_choices_keyboard(choices)))
+            elif chain2:
+                full_text = (reply + "\n\n" if reply else "") + self._format_chain(chain2)
+                _run_coro(bot.send_message(chat_id, full_text, reply_markup=self._build_keyboard(chain2)))
+            else:
+                _run_coro(bot.send_message(chat_id, reply or "角色资料查询完成，但没有得到后续方案。"))
+        except Exception as e:
+            try:
+                _run_coro(bot.send_message(chat_id, f"处理失败: {e}"))
+            except Exception:
+                pass
+
+    def _is_generation_research_chain(self, chain):
+        if len(chain or []) != 1:
+            return False
+        if chain[0].get("action") not in ("tagsite", "tags"):
+            return False
+        _, session = self.tester._session_current()
+        task = (session.get("conversation_state") or {}).get("active_task") or {}
+        return task.get("type") == "generation" and task.get("status") == "researching"
