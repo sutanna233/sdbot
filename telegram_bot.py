@@ -342,38 +342,28 @@ class TelegramBot:
             fut = asyncio.run_coroutine_threadsafe(coro, loop)
             return fut.result(timeout=120)
 
-        tool_results = []
         try:
-            _, session = self.tester._session_current()
-            for i, step in enumerate(chain):
+            def on_step(i, total, step):
                 desc = self.tester._step_desc(step["action"], step.get("params", {}))
-                _run_coro(_send(f"[{i+1}/{len(chain)}] {desc}"))
-                with self._get_lock(chat_id):
-                    action_result = self.tester._execute_action(step["action"], step.get("params", {}))
+                _run_coro(_send(f"[{i}/{total}] {desc}"))
+
+            def on_success(step, action_result):
+                summary = action_result.get("summary", "")
+                if summary:
+                    _run_coro(_send(f"  ✓ {summary}"))
+
+            def on_error(step, action_result):
                 if not action_result.get("ok", True):
                     err = action_result.get("error") or action_result.get("summary") or "未知错误"
-                    tool_results.append(f"[Tool Result] {step['action']}: 失败 - {err}")
                     _run_coro(_send(f"  ✗ 失败: {err}"))
-                else:
-                    summary = action_result.get("summary", "")
-                    tool_results.append(f"[Tool Result] {step['action']}: {summary or '成功'}")
-                    if summary:
-                        _run_coro(_send(f"  ✓ {summary}"))
-                with self._get_lock(chat_id):
-                    try:
-                        if step.get("action") == "dream" and isinstance(action_result, dict):
-                            gen = {"description": step.get("params", {}).get("description", ""),
-                                   "prompt": action_result.get("prompt", ""),
-                                   "params": step.get("params", {}),
-                                   "run": action_result.get("run")}
-                            self.tester.agent.state.save_generation(session, gen)
-                    except Exception:
-                        pass
-                    try:
-                        self.tester._inject_action_result(step, action_result)
-                    except Exception:
-                        pass
-                    self.tester._save_sessions()
+
+            with self._get_lock(chat_id):
+                self.tester.chain_runner.run(
+                    chain,
+                    on_step=on_step,
+                    on_success=on_success,
+                    on_error=on_error,
+                )
 
             last_run = getattr(self.tester, "last_run_dir", None)
             if last_run:
@@ -382,7 +372,6 @@ class TelegramBot:
                 _run_coro(_send("执行完毕"))
 
         except Exception as e:
-            tool_results.append(f"[Tool Result] 异常: {e}")
             try:
                 _run_coro(_send(f"执行失败: {e}"))
             except Exception:
@@ -400,13 +389,12 @@ class TelegramBot:
 
         try:
             with self._get_lock(chat_id):
-                for step in chain:
-                    action_result = self.tester._execute_action(step["action"], step.get("params", {}))
-                    self.tester._inject_action_result(step, action_result)
-                    if not action_result.get("ok", True):
-                        err = action_result.get("error") or action_result.get("summary") or "未知错误"
-                        _run_coro(bot.send_message(chat_id, f"角色资料查询失败: {err}"))
-                        return
+                results = self.tester.chain_runner.run(chain)
+                failed = next((r for r in results if not r.get("ok", True)), None)
+                if failed:
+                    err = failed.get("error") or failed.get("summary") or "未知错误"
+                    _run_coro(bot.send_message(chat_id, f"角色资料查询失败: {err}"))
+                    return
                 result = self.tester._agent_process(
                     "继续。基于上一步的工具输出决定下一步。",
                     source="tool_result",

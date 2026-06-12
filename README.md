@@ -126,7 +126,7 @@ python sdbot.py telegram start
 列出我的记忆
 ```
 
-Agent 会根据意图调用工具。绘图请求默认先给出 prompt choices，选择后再执行 `dream`。生成完成后会保存上一张图的结构化信息，因此“完整提示词”“这张”“上一张”“输出目录”等追问可以复用当前会话上下文。
+Agent 会根据意图调用工具。通用绘图请求会先给出 prompt choices，选择后再执行 `dream`；包含具体角色、人物或作品名的绘图请求会先用 `tagsite` 查询角色标签，再基于结构化查询结果生成 choices，避免未搜索就脑补角色设定。生成完成后会保存上一张图的结构化信息，因此“完整提示词”“这张”“上一张”“输出目录”等追问可以复用当前会话上下文。
 
 ## Telegram Bot
 
@@ -148,7 +148,7 @@ python sdbot.py telegram start
 Telegram 支持：
 
 - 普通自然语言聊天和绘图请求。
-- Prompt choices inline keyboard。
+- 具体角色绘图会先自动查询标签，再发送 Prompt choices inline keyboard。
 - 执行生成后回传图片文件。
 - 按 Telegram 用户隔离长期记忆命名空间。
 
@@ -237,6 +237,16 @@ selection:
 - `tag_cache.json`：角色/标签查询缓存。
 - `lora_triggers.json`：本地 LoRA 触发词配置。
 
+## 测试
+
+项目包含不依赖真实 LLM、SD WebUI 或 Telegram 的核心 Agent flow 测试：
+
+```bash
+python -B -m unittest discover -s tests -v
+```
+
+这些测试覆盖角色绘图的 `tagsite -> choices` 流程、choice 选择状态和 `tagsite` 结构化返回。
+
 ## 文件结构
 
 ```text
@@ -248,6 +258,7 @@ sdbot/
 ├── webui.py                 # Flask WebUI
 ├── agent/                   # Agent 路由、规划、验证、记忆、修复
 ├── tools/                   # 可被 Agent 调用的工具实现
+├── tests/                   # 核心 Agent flow 测试
 ├── templates/               # WebUI 模板
 ├── static/                  # WebUI 静态资源
 ├── artists.txt              # artist 列表

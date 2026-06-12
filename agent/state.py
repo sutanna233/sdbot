@@ -151,12 +151,14 @@ class ConversationState:
         params = step.get("params", {}) if isinstance(step, dict) else {}
         summary = action_result.get("summary", "") if isinstance(action_result, dict) else ""
         output = action_result.get("output", []) if isinstance(action_result, dict) else []
+        result = action_result.get("result", {}) if isinstance(action_result, dict) else {}
         tool = {
             "action": action,
             "params": params,
             "ok": bool(action_result.get("ok", True)) if isinstance(action_result, dict) else True,
             "summary": summary,
             "output": output[-20:] if isinstance(output, list) else [],
+            "result": self._trim_result(result),
             "created_at": _now(),
         }
         state["last_tool_result"] = tool
@@ -282,4 +284,26 @@ class ConversationState:
     def _trim_tool(self, tool):
         if not isinstance(tool, dict):
             return tool
-        return {k: tool.get(k) for k in ("action", "params", "ok", "summary", "output")}
+        return {k: tool.get(k) for k in ("action", "params", "ok", "summary", "output", "result")}
+
+    def _trim_result(self, result):
+        if not isinstance(result, dict):
+            return result
+        if "matches" in result:
+            copy = {
+                "query": result.get("query"),
+                "missing": result.get("missing"),
+                "tags": (result.get("tags") or [])[:80],
+                "matches": [],
+            }
+            for item in (result.get("matches") or [])[:5]:
+                if not isinstance(item, dict):
+                    continue
+                copy["matches"].append({
+                    "query": item.get("query"),
+                    "name": item.get("name"),
+                    "tags": (item.get("tags") or [])[:80],
+                    "tag_count": item.get("tag_count"),
+                })
+            return copy
+        return {k: result.get(k) for k in list(result.keys())[:20]}

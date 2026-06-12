@@ -9,4 +9,4 @@ class TagSiteTool:
         names = params.get("names", [])
         if isinstance(names, str):
             names = [names]
-        self.host.cmd_tagsite(*names)
+        return self.host.cmd_tagsite(*names)

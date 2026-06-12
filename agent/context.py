@@ -48,7 +48,8 @@ class ContextBuilder:
                 f"{state_text}\n"
                 "规则：基于 last_tool_result 判断下一步。"
                 "如果 active_task.type=generation 且 status=research_done，必须基于搜索结果生成 prompt choices，"
-                "不要再次搜索，不要直接 dream。\n"
+                "优先使用 last_tool_result.result.matches[].tags / result.tags 中的结构化标签；"
+                "不要再次搜索，不要直接 dream；未查到时不得脑补角色服装或设定。\n"
                 f"[用户请求]\n{user_input}"
             )
         if intent.name == "contextual_followup":

@@ -72,7 +72,8 @@ class LLMPlanner:
         if has_researched_generation:
             research_rule = (
                 "当前已经完成角色/tag research。必须基于 conversation_state.last_tool_result 和 active_task.goal 生成 prompt choices，"
-                "不要再次调用 tagsite，不要直接 dream。\n\n"
+                "优先使用 last_tool_result.result.matches[].tags / result.tags 中的结构化标签；"
+                "不要再次调用 tagsite，不要直接 dream；未查到时不得脑补角色服装或设定。\n\n"
             )
         return (
             research_rule

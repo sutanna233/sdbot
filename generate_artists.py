@@ -1,4 +1,4 @@
-import os, sys, re, time, json, base64, shutil, random, hashlib, argparse, itertools, subprocess
+import os, sys, re, time, json, base64, shutil, random, hashlib, argparse, itertools, subprocess, threading
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +12,7 @@ from telegram_bot import TelegramBot
 from tag_site import TagSite
 from web import WebFetcher
 from agent import AgentPipeline
+from agent.chain_runner import ChainRunner
 from agent.safety import SafetyPolicy
 from agent.schemas import TOOL_SCHEMAS
 from tools import (
@@ -65,6 +66,7 @@ class SDArtistTester:
         self._failed_model_keys = set()
         self.danbooru = DanbooruTagSearch(self.config)
         self.sessions_path = self.script_dir / "sessions.json"
+        self._sessions_lock = threading.RLock()
         self.sessions = self._load_sessions()
         self._loras_cache = None
         self._loras = []
@@ -124,6 +126,7 @@ class SDArtistTester:
             if tool_name != "chat" and tool_name in self.tool_registry.names():
                 self.tool_registry.register(tool_name, self.tool_registry.get(tool_name), schema=schema)
         self.tool_executor = ToolExecutor(self, self.tool_registry)
+        self.chain_runner = ChainRunner(self)
 
     def _init_models_config(self):
         """兼容旧格式: 没有 models: 段时自动从 llm: + vision: 构建."""
@@ -635,26 +638,29 @@ class SDArtistTester:
     def _save_sessions(self, data=None):
         if data is None:
             data = self.sessions
-        exc = None
-        tmp = self.sessions_path.with_suffix(self.sessions_path.suffix + f".{os.getpid()}.tmp")
-        for _ in range(20):
+        with self._sessions_lock:
+            exc = None
+            tmp = self.sessions_path.with_suffix(self.sessions_path.suffix + f".{os.getpid()}.tmp")
+            for _ in range(20):
+                try:
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    os.replace(tmp, self.sessions_path)
+                    return
+                except PermissionError as e:
+                    exc = e
+                    time.sleep(0.25)
+                except OSError as e:
+                    exc = e
+                    time.sleep(0.25)
             try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-                os.replace(tmp, self.sessions_path)
-                return
-            except PermissionError as e:
-                exc = e
-                time.sleep(0.25)
-            except OSError as e:
-                exc = e
-                time.sleep(0.25)
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
-        print(f"  [WARN] sessions.json 暂时无法保存: {exc}")
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+            print(f"  [WARN] sessions.json 暂时无法保存: {exc}")
 
     def _session_create(self, name=None):
         sid = _generate_sid()
@@ -1430,18 +1436,40 @@ class SDArtistTester:
     def cmd_tagsite(self, *names):
         if not names:
             print("  用法: tagsite <角色名1> [角色名2 ...]")
-            return
+            return {"query": [], "matches": [], "missing": [], "tags": []}
+        matches = []
+        missing = []
+        all_tags = []
+        seen_tags = set()
         for name in names:
             result = self.tag_site.search_character(name)
             if result:
                 print(f"\n  [角色] {result['name']}")
                 print(f"  [标签] ({len(result['tags'])}): {', '.join(result['tags'])}")
+                tags = [str(t).strip() for t in result.get("tags", []) if str(t).strip()]
+                for tag in tags:
+                    if tag not in seen_tags:
+                        all_tags.append(tag)
+                        seen_tags.add(tag)
+                matches.append({
+                    "query": name,
+                    "name": result.get("name") or name,
+                    "tags": tags,
+                    "tag_count": len(tags),
+                })
             else:
                 print(f"\n  [角色] {name} — 未找到")
+                missing.append(name)
         cache_path = self.tag_site.cache_path
         if cache_path.exists():
             size = len(self.tag_site._cache)
             print(f"\n  [缓存] {cache_path.name}: {size} 个角色")
+        return {
+            "query": list(names),
+            "matches": matches,
+            "missing": missing,
+            "tags": all_tags,
+        }
 
     # ── llm ──────────────────────────────────────────────────────────
 
@@ -2704,28 +2732,22 @@ WebUI:      /skill_create (TODO)
         return chain
 
     def _execute_chain_steps(self, chain):
-        for i, step in enumerate(chain, 1):
+        failed = False
+
+        def on_step(i, total, step):
             if i > 1:
-                self._tui_or_print(f"链式: 第 {i}/{len(chain)} 步", "info")
-            action_result = self._execute_action(step["action"], step.get("params", {}))
-            self._inject_action_result(step, action_result)
-            if step.get("action") == "dream" and isinstance(action_result, dict):
-                try:
-                    _, session = self._session_current()
-                    gen = {"description": step.get("params", {}).get("description", ""),
-                           "prompt": action_result.get("prompt", ""),
-                           "params": step.get("params", {}),
-                           "run": action_result.get("run")}
-                    self.agent.state.save_generation(session, gen)
-                    self._save_sessions()
-                except Exception:
-                    pass
-            if not action_result.get("ok", True):
-                self._tui_or_print(f"{step['action']} 执行失败: {action_result.get('error')}", "err")
-                return False
-            if len(chain) == 1 and self._should_end_after_single_tool(step, action_result):
-                return True
-        return True
+                self._tui_or_print(f"链式: 第 {i}/{total} 步", "info")
+
+        def on_error(step, action_result):
+            nonlocal failed
+            failed = True
+            self._tui_or_print(f"{step['action']} 执行失败: {action_result.get('error')}", "err")
+
+        def should_stop(step, action_result, index, total):
+            return total == 1 and self._should_end_after_single_tool(step, action_result)
+
+        self.chain_runner.run(chain, on_step=on_step, on_error=on_error, should_stop=should_stop)
+        return not failed
 
     def _handle_choices(self, result):
         choices = result.get("choices") or []
