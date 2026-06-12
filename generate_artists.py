@@ -1290,32 +1290,40 @@ class SDArtistTester:
 
     def cmd_generation_info(self, detail="prompt"):
         sid, session = self._session_current()
+        state = self.agent.state.get(session)
+        artifact = state.get("last_artifact") or {}
         generation = session.get("last_generation") or {}
-        if not generation:
+        if not generation and not artifact:
             print("  [生成] 当前对话还没有记录到上一张生成结果")
-            return
-        prompt = generation.get("prompt") or ""
+            return {"ok": False, "error": "no generation"}
+        prompt = artifact.get("prompt") or generation.get("prompt") or ""
         params = generation.get("params") or {}
         run = generation.get("run") or {}
+        run_dir = artifact.get("run_dir") or run.get("run_dir")
+        if detail in ("summary", "description", "what", "是什么"):
+            text = self.agent.state.describe_artifact(artifact or self.agent.state._artifact_from_generation(generation))
+            print(f"  [生成] {text}")
+            return {"ok": True, "summary": text, "artifact": artifact}
         if detail in ("path", "paths", "output", "folder", "目录"):
-            print(f"  [生成] 批次目录: {run.get('run_dir', '-')}")
+            print(f"  [生成] 批次目录: {run_dir or '-'}")
             for item in (run.get("results") or [])[:20]:
                 if item.get("info"):
                     print(f"    {item.get('info')}")
-            return
+            return {"ok": True, "path": run_dir, "artifact": artifact}
         if detail in ("params", "参数"):
             print("  [生成] 参数:")
             for key, value in params.items():
                 if value is not None:
                     print(f"    {key}: {value}")
-            return
+            return {"ok": True, "params": params, "artifact": artifact}
         print("  [生成] 完整提示词:")
         print(f"    {prompt}")
         if generation.get("negative_prompt"):
             print("  [生成] Negative:")
             print(f"    {generation['negative_prompt']}")
-        if run.get("run_dir"):
-            print(f"  [生成] 批次目录: {run['run_dir']}")
+        if run_dir:
+            print(f"  [生成] 批次目录: {run_dir}")
+        return {"ok": True, "prompt": prompt, "artifact": artifact}
 
     def _git(self, args, check=False):
         return subprocess.run(
@@ -2847,10 +2855,11 @@ WebUI:      /skill_create (TODO)
             except Exception as e:
                 print(f"  [ERR] skill chain step 执行失败: {e}")
 
-    def _inject_action_result(self, step, action_result):
+    def _inject_action_result(self, step, action_result, persist_conversation=None):
         """把 action 执行结果回写到 conversation 和 tool_history, 供 LLM 下次决策参考."""
         sid, session = self._session_current()
-        conv = session["conversation"]
+        if persist_conversation is None:
+            persist_conversation = bool(getattr(self, "_in_react_loop", False))
         output_lines = action_result.get("output", [])
         tail = output_lines[-30:] if len(output_lines) > 30 else output_lines
         output = "\n".join(tail)
@@ -2869,15 +2878,17 @@ WebUI:      /skill_create (TODO)
             "判断任务是否完成。完成返回 {\"action\": \"chat\", \"reply\": \"...\"}；\n"
             "未完成则 chain 下一个动作继续执行。"
         )
-        conv.append({"role": "user", "content": msg[:2000]})
-        conv.append({
-            "role": "assistant",
-            "content": json.dumps({
-                "reply": f"已执行 {step['action']}，请决定下一步",
-                "action": "chat",
-                "params": {},
-            }, ensure_ascii=False),
-        })
+        if persist_conversation:
+            conv = session["conversation"]
+            conv.append({"role": "user", "content": msg[:2000]})
+            conv.append({
+                "role": "assistant",
+                "content": json.dumps({
+                    "reply": f"已执行 {step['action']}，请决定下一步",
+                    "action": "chat",
+                    "params": {},
+                }, ensure_ascii=False),
+            })
         try:
             self.agent.state.save_tool_result(session, step, action_result)
         except Exception:

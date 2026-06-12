@@ -24,6 +24,7 @@ class ConversationState:
     def get(self, session):
         state = session.setdefault("conversation_state", {})
         state.setdefault("active_task", None)
+        state.setdefault("last_artifact", None)
         state.setdefault("last_choices", None)
         state.setdefault("last_generation", session.get("last_generation"))
         state.setdefault("last_search", None)
@@ -82,6 +83,7 @@ class ConversationState:
     def render_for_prompt(self, state, resolved=None):
         safe = {
             "active_task": state.get("active_task"),
+            "last_artifact": self._trim_artifact(state.get("last_artifact")),
             "last_choices": self._trim_choices(state.get("last_choices")),
             "last_generation": self._trim_generation(state.get("last_generation")),
             "last_search": state.get("last_search"),
@@ -144,6 +146,7 @@ class ConversationState:
     def save_generation(self, session, generation):
         state = self.get(session)
         state["last_generation"] = generation
+        state["last_artifact"] = self._artifact_from_generation(generation)
         task = state.get("active_task") or {}
         params = generation.get("params") if isinstance(generation, dict) else {}
         task.update({
@@ -154,6 +157,22 @@ class ConversationState:
         })
         state["active_task"] = task
         session["conversation_state"] = state
+
+    def last_artifact(self, session, artifact_type=None):
+        state = self.get(session)
+        artifact = state.get("last_artifact")
+        if artifact_type and isinstance(artifact, dict) and artifact.get("type") != artifact_type:
+            return None
+        return artifact if isinstance(artifact, dict) else None
+
+    def describe_artifact(self, artifact):
+        if not isinstance(artifact, dict):
+            return "当前没有可描述的结果。"
+        if artifact.get("type") == "image_generation":
+            summary = artifact.get("summary") or artifact.get("description") or "上一张生成图片"
+            run_dir = artifact.get("run_dir") or "-"
+            return f"刚刚生成的是：{summary}\n批次目录：{run_dir}"
+        return artifact.get("summary") or "刚才的工具结果已完成。"
 
     def save_tool_result(self, session, step, action_result):
         state = self.get(session)
@@ -301,6 +320,35 @@ class ConversationState:
             "prompt": str(generation.get("prompt") or "")[:800],
             "params": generation.get("params"),
             "run": generation.get("run"),
+        }
+
+    def _artifact_from_generation(self, generation):
+        generation = generation if isinstance(generation, dict) else {}
+        params = generation.get("params") if isinstance(generation.get("params"), dict) else {}
+        run = generation.get("run") if isinstance(generation.get("run"), dict) else {}
+        description = params.get("description") or generation.get("description") or "生成图片"
+        return {
+            "type": "image_generation",
+            "summary": description,
+            "description": description,
+            "prompt": generation.get("prompt") or "",
+            "params": params,
+            "run": run,
+            "run_dir": run.get("run_dir") if isinstance(run, dict) else None,
+            "created_at": _now(),
+        }
+
+    def _trim_artifact(self, artifact):
+        if not isinstance(artifact, dict):
+            return artifact
+        return {
+            "type": artifact.get("type"),
+            "summary": artifact.get("summary"),
+            "description": artifact.get("description"),
+            "prompt": str(artifact.get("prompt") or "")[:800],
+            "params": artifact.get("params"),
+            "run_dir": artifact.get("run_dir"),
+            "created_at": artifact.get("created_at"),
         }
 
     def _trim_tool(self, tool):

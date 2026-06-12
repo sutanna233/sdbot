@@ -9,7 +9,7 @@ class ChainRunner:
             if on_step:
                 on_step(index, total, step)
             action_result = self.host._execute_action(step["action"], step.get("params", {}))
-            self.host._inject_action_result(step, action_result)
+            self.host._inject_action_result(step, action_result, persist_conversation=False)
             if step.get("action") == "dream" and isinstance(action_result, dict):
                 self._save_generation(step, action_result)
             results.append(action_result)
@@ -26,11 +26,13 @@ class ChainRunner:
     def _save_generation(self, step, action_result):
         try:
             _, session = self.host._session_current()
+            generation = action_result.get("result") if isinstance(action_result, dict) else {}
+            generation = generation if isinstance(generation, dict) else {}
             gen = {
-                "description": step.get("params", {}).get("description", ""),
-                "prompt": action_result.get("prompt", ""),
-                "params": step.get("params", {}),
-                "run": action_result.get("run"),
+                "description": generation.get("description") or step.get("params", {}).get("description", ""),
+                "prompt": generation.get("prompt") or action_result.get("prompt", ""),
+                "params": generation.get("params") or step.get("params", {}),
+                "run": generation.get("run") or action_result.get("run"),
             }
             self.host.agent.state.save_generation(session, gen)
             self.host._save_sessions()

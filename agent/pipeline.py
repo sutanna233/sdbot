@@ -25,6 +25,14 @@ class AgentPipeline:
         state = self.state.get(session)
         resolved = self.state.resolve(user_input, state)
 
+        artifact_result = self._handle_artifact_reference(session, user_input)
+        if artifact_result:
+            self.state.update_after_plan(session, user_input, artifact_result)
+            self.memory.append_turn(session, user_input, artifact_result)
+            self.memory.check_summarize(session)
+            self.host._save_sessions()
+            return artifact_result
+
         intent = self.router.route(user_input)
         if intent.name != "tool_continue" and resolved.get("turn", {}).get("kind") in ("followup", "explain", "reaction", "selection", "cancel", "retry", "correction"):
             intent.name = "contextual_followup"
@@ -101,3 +109,33 @@ class AgentPipeline:
             return False
         chain = self.host._extract_chain(result)
         return len(chain) == 1 and chain[0].get("action") in ("character_resolve", "tagsite", "tags")
+
+    def _handle_artifact_reference(self, session, user_input):
+        text = str(user_input or "").strip()
+        if not text:
+            return None
+        artifact = self.state.last_artifact(session)
+        generation = session.get("last_generation") or {}
+        has_generation = bool(artifact or generation)
+        if not has_generation:
+            return None
+        if text in ("打开", "打开看看", "打开看", "看看", "看一下"):
+            return {"reply": "这是刚刚生成的结果。", "action": "gallery", "params": {}}
+        if any(k in text for k in ("打开刚刚", "打开刚才", "打开上一", "打开这张", "打开图片", "打开画廊")):
+            return {"reply": "这是刚刚生成的结果。", "action": "gallery", "params": {}}
+        if any(k in text for k in ("刚刚画的是什么", "刚才画的是什么", "刚刚生成了什么", "刚才生成了什么", "我刚刚画的是什么", "我刚才画的是什么")):
+            return {"reply": self.state.describe_artifact(artifact or self.state._artifact_from_generation(generation)), "action": "chat", "params": {}}
+        if any(k in text for k in ("完整提示词", "提示词")):
+            return {"reply": self._format_generation_info(generation, artifact, "prompt"), "action": "chat", "params": {}}
+        if any(k in text for k in ("输出目录", "输出文件夹", "保存在哪", "在哪个文件夹")):
+            return {"reply": self._format_generation_info(generation, artifact, "path"), "action": "chat", "params": {}}
+        return None
+
+    def _format_generation_info(self, generation, artifact, detail):
+        artifact = artifact or self.state._artifact_from_generation(generation)
+        if detail == "path":
+            return f"批次目录：{artifact.get('run_dir') or '-'}"
+        prompt = artifact.get("prompt") or (generation or {}).get("prompt") or ""
+        if prompt:
+            return f"完整提示词：\n{prompt}"
+        return "当前记录里没有完整提示词。"

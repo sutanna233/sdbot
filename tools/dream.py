@@ -33,4 +33,4 @@ class GenerationInfoTool:
 
     def __call__(self, params):
         params = params or {}
-        self.host.cmd_generation_info(params.get("detail", "prompt"))
+        return self.host.cmd_generation_info(params.get("detail", "prompt"))

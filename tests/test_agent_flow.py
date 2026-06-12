@@ -189,6 +189,35 @@ class AgentFlowTests(unittest.TestCase):
             self.assertEqual(result["resolved"][0]["tag"], "amiya_(arknights)")
             self.assertEqual(result["resolved"][0]["source"], "llm_candidate_verified+work")
 
+    def test_artifact_describe_ignores_wrong_summary(self):
+        host = FakeHost([])
+        _, session = host._session_current()
+        session["summary"] = "用户刚才没有生成图片，普瑞赛斯失败。"
+        host.agent.state.save_generation(session, {
+            "description": "mudrock_(arknights), arknights",
+            "prompt": "masterpiece, mudrock_(arknights)",
+            "params": {"description": "mudrock_(arknights), arknights"},
+            "run": {"run_dir": "outputs/run_mudrock"},
+        })
+
+        result = host.agent.process("我刚刚画的是什么呢")
+        self.assertEqual(result["action"], "chat")
+        self.assertIn("mudrock_(arknights)", result["reply"])
+        self.assertNotIn("普瑞赛斯失败", result["reply"])
+
+    def test_open_uses_last_artifact_gallery(self):
+        host = FakeHost([])
+        _, session = host._session_current()
+        host.agent.state.save_generation(session, {
+            "description": "test image",
+            "prompt": "prompt",
+            "params": {"description": "test image"},
+            "run": {"run_dir": "outputs/run"},
+        })
+
+        result = host.agent.process("打开")
+        self.assertEqual(result["action"], "gallery")
+
 
 if __name__ == "__main__":
     unittest.main()
