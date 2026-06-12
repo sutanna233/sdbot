@@ -126,7 +126,7 @@ python sdbot.py telegram start
 列出我的记忆
 ```
 
-Agent 会根据意图调用工具。通用绘图请求会先给出 prompt choices，选择后再执行 `dream`；包含具体角色、人物或作品名的绘图请求会先用 `character_resolve` 做本地 alias / tag cache 解析。只有高置信解析后才会基于结构化标签生成 choices；低置信或同名角色会要求用户确认、提供 Danbooru tag，或选择按原描述直出，避免未确认就脑补角色设定。生成完成后会保存上一张图的结构化信息，因此“完整提示词”“这张”“上一张”“输出目录”等追问可以复用当前会话上下文。
+Agent 会根据意图调用工具。通用绘图请求会先给出 prompt choices，选择后再执行 `dream`；包含具体角色、人物或作品名的绘图请求会先用 `character_resolve` 做本地 alias / tag cache 解析。未命中时，系统会让 LLM 只提出 Danbooru tag 候选，再用 tagsite/cache 验证候选，只有高置信解析后才会基于结构化标签生成 choices；低置信或同名角色会要求用户确认候选，或选择按原描述直出，避免未确认就脑补角色设定。生成完成后会保存上一张图的结构化信息，因此“完整提示词”“这张”“上一张”“输出目录”等追问可以复用当前会话上下文。
 
 ## Telegram Bot
 

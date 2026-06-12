@@ -83,6 +83,11 @@ class CharacterResolver:
                 return self._resolved(character, character, data, "exact_input", "high", self._matched_work(data, works))
 
         candidates = self._cache_candidates(character, works, tag_hints)
+        if not candidates:
+            candidates = self._verified_llm_candidates(character, works)
+        resolved = self._auto_resolve_candidate(character, candidates, works)
+        if resolved:
+            return resolved
         return {"status": "ambiguous" if candidates else "unresolved", "input": character, "candidates": candidates}
 
     def _resolved(self, character, tag, data, source, confidence, work=None):
@@ -126,6 +131,83 @@ class CharacterResolver:
             })
         candidates.sort(key=lambda c: c["score"], reverse=True)
         return candidates[:8]
+
+    def _verified_llm_candidates(self, character, works):
+        tags = self._llm_candidate_tags(character, works)
+        candidates = []
+        seen = set()
+        work_keys = {self._normalize(w) for w in works}
+        for tag in tags:
+            key = self._normalize(tag)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            data = self._cache_lookup(tag)
+            if not data:
+                data = self.host.tag_site.search_character(tag)
+            if not data:
+                continue
+            tag_list = data.get("tags") or []
+            work_hint = self._candidate_work_hint(tag)
+            work_match = self._tags_match_work(tag_list, work_keys) or (work_hint and self._normalize(work_hint) in {self._normalize(t) for t in tag_list})
+            score = 0.82 + (0.15 if work_match else 0)
+            candidates.append({
+                "tag": self._normalize(tag),
+                "name": data.get("name") or tag,
+                "work": self._matched_work(data, works) or work_hint,
+                "score": round(min(score, 0.99), 2),
+                "reason": "llm_candidate_verified" + ("+work" if work_match else ""),
+                "tags": tag_list[:20],
+            })
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        return candidates[:8]
+
+    def _auto_resolve_candidate(self, character, candidates, works):
+        if not candidates:
+            return None
+        if works:
+            matched = [c for c in candidates if c.get("work")]
+            if len(matched) != 1:
+                return None
+            item = matched[0]
+        else:
+            return None
+        return self._resolved(
+            character,
+            item.get("tag"),
+            {"name": item.get("name"), "tags": item.get("tags") or []},
+            item.get("reason", "candidate_verified"),
+            "high",
+            item.get("work"),
+        )
+
+    def _llm_candidate_tags(self, character, works):
+        llm_getter = getattr(self.host, "_llm", None)
+        if not callable(llm_getter):
+            return []
+        system = (
+            "你是 Danbooru 角色 tag 候选生成器。只输出 JSON，不要解释。"
+            "根据角色名和作品名给出最多 5 个可能的 Danbooru character tag 候选。"
+            "这些只是候选，不是事实；不要编造外观描述。"
+            "输出格式: {\"candidates\": [\"character_(copyright)\"]}"
+        )
+        payload = {"character": character, "works": works}
+        try:
+            result = llm_getter().agent_chat(system, [], json.dumps(payload, ensure_ascii=False))
+        except Exception:
+            return []
+        if isinstance(result, dict):
+            values = result.get("candidates") or result.get("tags") or []
+            if isinstance(values, str):
+                values = [values]
+            return [str(v).strip() for v in values if str(v).strip()]
+        if isinstance(result, list):
+            return [str(v).strip() for v in result if str(v).strip()]
+        return []
+
+    def _candidate_work_hint(self, tag):
+        match = re.search(r"\(([^)]+)\)\s*$", str(tag or ""))
+        return match.group(1).strip() if match else None
 
     def _infer_from_request(self, request):
         text = re.sub(r"^(帮我|请|给我)?(画|生成|出图|来)\s*(一张|一个|个|张)?", "", request).strip()

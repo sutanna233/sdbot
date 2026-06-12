@@ -79,7 +79,7 @@ class LLMPlanner:
         if needs_character_confirmation:
             return (
                 "角色解析没有高置信结果。必须先返回确认类 choices 或 chat 说明，不得返回构图/姿势类 prompt choices，不得直接 dream。"
-                "choices 可以包含：按原描述直出、让用户提供英文 Danbooru tag、或从 last_tool_result.result.candidates 中确认一个候选。"
+                "如果 last_tool_result.result.candidates 有候选，优先让用户从候选中确认；否则提供按原描述直出、换个说法/继续搜索，最后才是让用户提供英文 Danbooru tag。"
                 "候选确认时使用 character_confirm；未确认前不要把候选当事实。\n\n"
             )
         return (

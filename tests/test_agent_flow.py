@@ -159,6 +159,36 @@ class AgentFlowTests(unittest.TestCase):
             self.assertEqual(result["status"], "unresolved")
             self.assertEqual(result["unresolved"], ["角色B"])
 
+    def test_character_resolver_discovers_and_verifies_llm_candidate(self):
+        class LLM:
+            def agent_chat(self, system, conversation, user_input):
+                return {"candidates": ["amiya_(arknights)", "amiya"]}
+
+        class TagSite:
+            def __init__(self):
+                self._cache = {}
+
+            def search_character(self, tag):
+                if tag == "amiya_(arknights)":
+                    return {"name": "amiya_(arknights)", "tags": ["amiya_(arknights)", "arknights", "1girl"]}
+                return None
+
+        class Host:
+            def __init__(self, root):
+                self.script_dir = Path(root)
+                self.tag_site = TagSite()
+
+            def _llm(self):
+                return LLM()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host = Host(tmp)
+            host.character_resolver = CharacterResolver(host)
+            result = CharacterResolveTool(host)({"request": "画一张明日方舟的阿米娅", "characters": ["阿米娅"], "works": ["明日方舟"]})
+            self.assertEqual(result["status"], "resolved")
+            self.assertEqual(result["resolved"][0]["tag"], "amiya_(arknights)")
+            self.assertEqual(result["resolved"][0]["source"], "llm_candidate_verified+work")
+
 
 if __name__ == "__main__":
     unittest.main()
