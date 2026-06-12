@@ -8,6 +8,15 @@ def _now():
 
 
 class ConversationState:
+    STATUS_RESEARCHING = "researching"
+    STATUS_RESEARCH_DONE = "research_done"
+    STATUS_RESEARCH_FAILED = "research_failed"
+    STATUS_WAITING_CHOICE = "waiting_choice"
+    STATUS_EXECUTING = "executing"
+    STATUS_COMPLETED = "completed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_FAILED = "failed"
+
     def __init__(self, host):
         self.host = host
 
@@ -97,7 +106,7 @@ class ConversationState:
                     "cancelled": False,
                     "created_at": _now(),
                 }
-                state["active_task"] = self._task_from_choices(user_input, choices, "waiting_choice")
+                state["active_task"] = self._task_from_choices(user_input, choices, self.STATUS_WAITING_CHOICE)
             else:
                 task = self._task_from_result(user_input, result, status="planning")
                 if task:
@@ -114,7 +123,7 @@ class ConversationState:
             "cancelled": False,
             "created_at": _now(),
         }
-        state["active_task"] = self._task_from_choices(user_input, choices, "waiting_choice")
+        state["active_task"] = self._task_from_choices(user_input, choices, self.STATUS_WAITING_CHOICE)
         session["conversation_state"] = state
 
     def mark_choice(self, session, index=None, cancelled=False):
@@ -126,7 +135,7 @@ class ConversationState:
             state["last_choices"] = choices
         task = state.get("active_task") or {}
         if task:
-            task["status"] = "cancelled" if cancelled else "executing"
+            task["status"] = self.STATUS_CANCELLED if cancelled else self.STATUS_EXECUTING
             task["updated_at"] = _now()
             state["active_task"] = task
         session["conversation_state"] = state
@@ -139,7 +148,7 @@ class ConversationState:
         task.update({
             "type": "generation",
             "goal": (params or {}).get("description") or (generation or {}).get("description") or task.get("goal", "生成图片"),
-            "status": "completed",
+            "status": self.STATUS_COMPLETED,
             "updated_at": _now(),
         })
         state["active_task"] = task
@@ -174,8 +183,8 @@ class ConversationState:
                 "summary": summary,
                 "created_at": _now(),
             }
-            if active.get("type") == "generation" and active.get("status") == "researching":
-                active["status"] = "research_done" if tool["ok"] else "research_failed"
+            if active.get("type") == "generation" and active.get("status") == self.STATUS_RESEARCHING:
+                active["status"] = self.STATUS_RESEARCH_DONE if tool["ok"] else self.STATUS_RESEARCH_FAILED
                 active["research"] = state["last_search"]
                 active["updated_at"] = _now()
                 state["active_task"] = active
@@ -185,7 +194,7 @@ class ConversationState:
                     "goal": "搜索信息",
                     "subject": query,
                     "constraints": {},
-                    "status": "completed" if tool["ok"] else "failed",
+                    "status": self.STATUS_COMPLETED if tool["ok"] else self.STATUS_FAILED,
                     "updated_at": _now(),
                 }
         session["conversation_state"] = state
@@ -198,7 +207,7 @@ class ConversationState:
             "goal": str(user_input or ""),
             "subject": params.get("names") or str(user_input or ""),
             "constraints": {},
-            "status": "researching",
+            "status": self.STATUS_RESEARCHING,
             "created_at": _now(),
             "updated_at": _now(),
         }
