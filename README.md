@@ -58,6 +58,45 @@ Copy-Item config.example.yaml config.yaml
 
 ## 快速开始
 
+### 第一次使用
+
+1. 启动 Stable Diffusion WebUI，并确保已启用 API。A1111 WebUI 通常需要带 `--api` 参数启动。
+2. 复制 `config.example.yaml` 为 `config.yaml`。
+3. 在 `config.yaml` 中填写 `sd_api.base_url` 和 LLM API Key。
+4. 运行 `python sdbot.py shell` 进入对话式 CLI。
+5. 输入自然语言绘图请求，例如：
+
+```text
+画一张白发猫娘
+```
+
+没有 Telegram Token 也可以正常使用 CLI 和 WebUI。
+
+### 最小配置示例
+
+```yaml
+sd_api:
+  base_url: http://127.0.0.1:7860
+
+llm:
+  provider: deepseek
+  base_url: https://api.deepseek.com
+  model: deepseek-v4-flash
+  api_key: "你的 API Key"
+
+models:
+  deepseek_deepseek-v4-flash:
+    provider: deepseek
+    base_url: https://api.deepseek.com
+    model: deepseek-v4-flash
+    api_key: "你的 API Key"
+    capabilities:
+      - chat
+
+selection:
+  chat: deepseek_deepseek-v4-flash
+```
+
 启动对话式 CLI：
 
 ```bash
@@ -195,6 +234,34 @@ update:
   check_on_start: false
   auto_apply: false
   update_dependencies: false
+```
+
+## FAQ
+
+### 连接不上 Stable Diffusion WebUI？
+
+确认 WebUI 已启动并启用 API。A1111 WebUI 通常需要带 `--api` 参数启动。可以用下面的命令检查 API 是否可访问：
+
+```bash
+curl http://127.0.0.1:7860/sdapi/v1/options
+```
+
+如果你的 WebUI 不在本机或端口不是 `7860`，同步修改 `config.yaml` 里的 `sd_api.base_url`。
+
+### 生成时报 LLM API 错误？
+
+检查 `config.yaml` 中的 `base_url`、`model` 和 `api_key` 是否正确。项目使用 OpenAI-compatible 接口，因此不同服务商通常只需要调整这几个字段。
+
+### Telegram Bot 没反应？
+
+确认 `telegram.token` 正确。如果配置了 `allowed_users`，还要确认当前 Telegram user id 已加入列表；如果 `allowed_users` 为空，则不限制用户。
+
+### Windows 终端乱码？
+
+建议使用 Windows Terminal，并确保终端使用 UTF-8。必要时可在 PowerShell 中执行：
+
+```powershell
+chcp 65001
 ```
 
 ## 配置说明
