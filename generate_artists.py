@@ -1429,6 +1429,17 @@ class SDArtistTester:
 
     def cmd_tags(self, keyword, search_type=None):
         results = self.danbooru.search_tags(keyword)
+        if not results and re.search(r"[\s,]+", str(keyword or "")):
+            seen = set()
+            results = []
+            for part in re.split(r"[\s,]+", str(keyword or "").strip()):
+                if not part:
+                    continue
+                for item in self.danbooru.search_tags(part):
+                    name = item.get("name")
+                    if name and name not in seen:
+                        results.append(item)
+                        seen.add(name)
         if search_type:
             results = [t for t in results if t["type"] == search_type]
         if not results:
@@ -1706,7 +1717,21 @@ h1{{font-size:18px;margin-bottom:4px}}
             self._generate_gallery(target)
         p = target / "index.html"
         if p.exists() and open_after:
-            os.startfile(p)
+            self._open_gallery_file(p)
+
+    def _open_gallery_file(self, path):
+        path = Path(path).resolve()
+        url = path.as_uri()
+        print(f"  [Gallery] {path}")
+        print(f"  打开: {url}")
+        if sys.platform == "win32":
+            os.startfile(path)
+            return
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
 
     def cmd_webui(self, host="127.0.0.1", port=7861, background=False):
         if getattr(self, "_webui_running", False):
@@ -1765,7 +1790,7 @@ h1{{font-size:18px;margin-bottom:4px}}
             print(f"  {line}")
         print(f"  ════════════════")
 
-    def cmd_telegram(self, action="status", token=None):
+    def cmd_telegram(self, action="status", token=None, block=False):
         if action == "stop":
             if self._telegram_running and self._telegram_bot:
                 self._telegram_bot.stop()
@@ -1801,6 +1826,15 @@ h1{{font-size:18px;margin-bottom:4px}}
             t.start()
             self._telegram_running = True
             print("  [OK] Telegram 机器人已后台启动")
+            if block:
+                print("  按 Ctrl+C 停止")
+                try:
+                    while self._telegram_running:
+                        time.sleep(3600)
+                except KeyboardInterrupt:
+                    print("  正在停止 Telegram 机器人...")
+                finally:
+                    self._cleanup_telegram()
             return
 
         # status
@@ -3376,6 +3410,12 @@ WebUI:      /skill_create (TODO)
                 self.cmd_artists(search=getattr(args, "search", None))
         elif args.command == "llm":
             self.cmd_llm(args.action, getattr(args, "key", None), getattr(args, "value", None))
+        elif args.command == "models":
+            self.cmd_models(
+                action=getattr(args, "action", "list"),
+                role=getattr(args, "role", None),
+                model_key=getattr(args, "model_key", None),
+            )
         elif args.command == "config":
             if args.action == "set" and getattr(args, "key", None):
                 self.cmd_config("set", args.key, getattr(args, "value", None))
@@ -3388,7 +3428,11 @@ WebUI:      /skill_create (TODO)
         elif args.command == "webui":
             self.cmd_webui(host=getattr(args, "host", "127.0.0.1"), port=int(args.port))
         elif args.command == "telegram":
-            self.cmd_telegram(action=args.action, token=getattr(args, "token", None))
+            self.cmd_telegram(
+                action=args.action,
+                token=getattr(args, "token", None),
+                block=args.action == "start",
+            )
         elif args.command == "update":
             self.cmd_update(
                 apply=getattr(args, "apply", False),
@@ -3406,6 +3450,7 @@ WebUI:      /skill_create (TODO)
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="sdbot - Stable Diffusion agent bot")
+    p.add_argument("--debug", action="store_true", help="Show traceback on errors")
     sp = p.add_subparsers(dest="command")
 
     r = sp.add_parser("run", help="Run generation")
@@ -3425,6 +3470,11 @@ def parse_args(argv=None):
     l.add_argument("action", choices=["test","status","set"])
     l.add_argument("key", nargs="?")
     l.add_argument("value", nargs="?")
+
+    m = sp.add_parser("models", help="List / manage configured LLM models")
+    m.add_argument("action", nargs="?", default="list", choices=["list", "status", "switch", "test"])
+    m.add_argument("role", nargs="?", choices=["chat", "vision"])
+    m.add_argument("model_key", nargs="?")
 
     sp.add_parser("status")
     h = sp.add_parser("history")
@@ -3479,12 +3529,24 @@ def parse_args(argv=None):
 
 def main():
     args = parse_args()
-    tester = SDArtistTester()
-    if args.command != "update" and tester.config.get("telegram", {}).get("auto_start", False):
-        token = tester.config.get("telegram", {}).get("token", "")
-        if token:
-            tester.cmd_telegram(action="start")
-    tester._dispatch(args)
+    if not args.command:
+        args.command = "shell"
+    try:
+        tester = SDArtistTester()
+        if args.command == "shell" and tester.config.get("telegram", {}).get("auto_start", False):
+            token = tester.config.get("telegram", {}).get("token", "")
+            if token:
+                tester.cmd_telegram(action="start")
+        tester._dispatch(args)
+    except KeyboardInterrupt:
+        print("\n  已停止")
+        sys.exit(130)
+    except Exception as e:
+        print(f"  [ERR] {type(e).__name__}: {e}", file=sys.stderr)
+        if getattr(args, "debug", False):
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
