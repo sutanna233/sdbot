@@ -413,4 +413,4 @@ sdbot/
 
 ## License
 
-当前仓库未声明许可证。公开使用或二次分发前请自行补充合适的许可证文件。
+本项目已包含 `LICENSE` 文件，使用 **GNU Affero General Public License v3.0（AGPL-3.0）** 授权。公开使用、修改或二次分发时，请遵守 AGPL-3.0 的条款。
