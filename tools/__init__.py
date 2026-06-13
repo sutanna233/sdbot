@@ -1,3 +1,4 @@
+from .bootstrap import build_tool_registry
 from .config import ClearTool, ConfigTool, LLMTool
 from .characters import CharacterConfirmTool, CharacterResolveTool
 from .dream import DreamTool, GenerationInfoTool
@@ -19,7 +20,7 @@ from .vision import CritiqueTool
 from .web_fetch import WebFetchTool
 
 __all__ = [
-    "ToolExecutor", "ToolRegistry", "DreamTool", "ModelsTool", "AddProviderTool",
+    "ToolExecutor", "ToolRegistry", "build_tool_registry", "DreamTool", "ModelsTool", "AddProviderTool",
     "CharacterResolveTool", "CharacterConfirmTool",
     "TagSiteTool", "LorasTool", "TelegramTool", "StatusTool", "HistoryTool",
     "ArtistsTool", "GalleryTool", "WebUITool", "ConfigTool", "ClearTool", "LLMTool",

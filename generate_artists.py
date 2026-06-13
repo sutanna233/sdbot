@@ -1,44 +1,39 @@
-import os, sys, re, time, json, base64, shutil, random, hashlib, argparse, itertools, subprocess, threading
+import os, sys, re, time, json, shutil, subprocess, threading
 from datetime import datetime
 from pathlib import Path
 
 import requests, yaml
 from PIL import Image
-from io import BytesIO
 
 from llm import ModelClient
 from danbooru import DanbooruTagSearch
 from telegram_bot import TelegramBot
 from tag_site import TagSite
 from web import WebFetcher
+from config_store import ConfigStore
+from generation_helpers import (
+    ArtistSampler, build_prompt, combo_fingerprint, create_output_dir, filter_similar,
+    get_base_name, is_duplicate, load_artists, mark_generated, sanitize_filename,
+    save_image, save_info_txt,
+)
+from session_store import SessionStore
+from agent.host import AgentHost
 from agent import AgentPipeline
 from agent.chain_runner import ChainRunner
 from agent.safety import SafetyPolicy
-from agent.schemas import TOOL_SCHEMAS
-from tools import (
-    AddProviderTool, ArtistsTool, CharacterConfirmTool, CharacterResolveTool,
-    ClearTool, ConfigTool, CritiqueTool, DreamTool,
-    FileDeleteTool, FileFindTool, FileListTool, FileReadTool, FileWriteTool,
-    GenerationInfoTool,
-    GalleryTool, HistoryTool, LLMTool, LorasTool, MemoryGetTool, MemoryListTool,
-    MemoryForgetTool, MemorySetTool, ModelsTool, SessionListTool,
-    SessionNewTool, SessionRenameTool, SessionSwitchTool, StatusTool, TagSiteTool,
-    TagsTool, TelegramTool, ToolExecutor, ToolRegistry, WebFetchTool, WebUITool,
-    RunTool, SkillCreateTool, SkillListTool, SkillLoadTool, UpdateTool,
-)
+from tools import ToolExecutor, build_tool_registry
+from cli_args import parse_args
+from cli_dispatch import dispatch
 from cli_tui import TUIController
 
-
-
-def _generate_sid():
-    return "sess_" + hashlib.sha1(os.urandom(16)).hexdigest()[:12]
 
 
 class SDArtistTester:
     def __init__(self, config_path="config.yaml", cli_args=None):
         self.script_dir = Path(__file__).parent
         self.config_path = self.script_dir / config_path
-        self.config = self._load_config()
+        self.config_store = ConfigStore(self.config_path)
+        self.config = self.config_store.data
         self._init_models_config()
 
         base_url = self.config["sd_api"]["base_url"].rstrip("/")
@@ -54,6 +49,7 @@ class SDArtistTester:
         self.similarity_filter = dc.get("similarity_filter", "strict")
         self.allow_resample = dc.get("allow_resample", False)
         self.history_path = self.script_dir / dc.get("history_file", "history.json")
+        self.artist_sampler = ArtistSampler(self)
         self.history = self._load_history()
         self.retry = self.config["testing"].get("retry", 2)
         self.continue_on_error = self.config["testing"].get("continue_on_error", True)
@@ -68,7 +64,8 @@ class SDArtistTester:
         self.danbooru = DanbooruTagSearch(self.config)
         self.sessions_path = self.script_dir / "sessions.json"
         self._sessions_lock = threading.RLock()
-        self.sessions = self._load_sessions()
+        self.session_store = SessionStore(self.sessions_path, self._sessions_lock)
+        self.sessions = self.session_store.data
         self._loras_cache = None
         self._loras = []
         self.lora_triggers_path = self.script_dir / "lora_triggers.json"
@@ -85,51 +82,9 @@ class SDArtistTester:
         self._in_react_loop = False
         self.tui = None
         self.safety = SafetyPolicy()
-        self.agent = AgentPipeline(self)
-        self.tool_registry = ToolRegistry()
-        self.tool_registry.register("dream", DreamTool(self))
-        self.tool_registry.register("models", ModelsTool(self))
-        self.tool_registry.register("add_provider", AddProviderTool(self))
-        self.tool_registry.register("tagsite", TagSiteTool(self))
-        self.tool_registry.register("character_resolve", CharacterResolveTool(self))
-        self.tool_registry.register("character_confirm", CharacterConfirmTool(self))
-        self.tool_registry.register("loras", LorasTool(self))
-        self.tool_registry.register("telegram", TelegramTool(self))
-        self.tool_registry.register("status", StatusTool(self))
-        self.tool_registry.register("history", HistoryTool(self))
-        self.tool_registry.register("artists", ArtistsTool(self))
-        self.tool_registry.register("gallery", GalleryTool(self))
-        self.tool_registry.register("webui", WebUITool(self))
-        self.tool_registry.register("config_get", ConfigTool(self, "get"))
-        self.tool_registry.register("config_set", ConfigTool(self, "set"))
-        self.tool_registry.register("clear", ClearTool(self))
-        self.tool_registry.register("llm_test", LLMTool(self, "test"))
-        self.tool_registry.register("llm_status", LLMTool(self, "status"))
-        self.tool_registry.register("session_new", SessionNewTool(self))
-        self.tool_registry.register("session_list", SessionListTool(self))
-        self.tool_registry.register("session_switch", SessionSwitchTool(self))
-        self.tool_registry.register("session_rename", SessionRenameTool(self))
-        self.tool_registry.register("file_read", FileReadTool(self))
-        self.tool_registry.register("file_write", FileWriteTool(self))
-        self.tool_registry.register("file_list", FileListTool(self))
-        self.tool_registry.register("file_delete", FileDeleteTool(self))
-        self.tool_registry.register("file_find", FileFindTool(self))
-        self.tool_registry.register("generation_info", GenerationInfoTool(self))
-        self.tool_registry.register("web_fetch", WebFetchTool(self))
-        self.tool_registry.register("critique", CritiqueTool(self))
-        self.tool_registry.register("run", RunTool(self))
-        self.tool_registry.register("tags", TagsTool(self))
-        self.tool_registry.register("update", UpdateTool(self))
-        self.tool_registry.register("skill_list", SkillListTool(self))
-        self.tool_registry.register("skill_load", SkillLoadTool(self))
-        self.tool_registry.register("skill_create", SkillCreateTool(self))
-        self.tool_registry.register("memory_set", MemorySetTool(self))
-        self.tool_registry.register("memory_get", MemoryGetTool(self))
-        self.tool_registry.register("memory_forget", MemoryForgetTool(self))
-        self.tool_registry.register("memory_list", MemoryListTool(self))
-        for tool_name, schema in TOOL_SCHEMAS.items():
-            if tool_name != "chat" and tool_name in self.tool_registry.names():
-                self.tool_registry.register(tool_name, self.tool_registry.get(tool_name), schema=schema)
+        self.agent_host = AgentHost(self)
+        self.agent = AgentPipeline(self.agent_host)
+        self.tool_registry = build_tool_registry(self)
         self.tool_executor = ToolExecutor(self, self.tool_registry)
         self.chain_runner = ChainRunner(self)
 
@@ -592,23 +547,12 @@ class SDArtistTester:
     # ── config / history ────────────────────────────────────────────
 
     def _load_config(self):
-        if not self.config_path.exists():
-            print(f"Error: Config file not found: {self.config_path}")
-            sys.exit(1)
-        with open(self.config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+        self.config_store.data = self.config_store.load()
+        self.config = self.config_store.data
+        return self.config
 
     def _save_config(self):
-        exc = None
-        for _ in range(3):
-            try:
-                with open(self.config_path, "w", encoding="utf-8") as f:
-                    yaml.dump(self.config, f, allow_unicode=True, default_flow_style=False)
-                return
-            except PermissionError as e:
-                exc = e
-                time.sleep(0.2)
-        raise exc or RuntimeError("保存 config 失败")
+        self.config_store.save(self.config)
 
     def _load_history(self):
         if not self.dedup_enabled or not self.history_path.exists():
@@ -628,250 +572,91 @@ class SDArtistTester:
     # ── sessions ────────────────────────────────────────────────────
 
     def _load_sessions(self):
-        if not self.sessions_path.exists():
-            data = {"current": None, "sessions": {}}
-            self._save_sessions(data)
-            return data
-        try:
-            with open(self.sessions_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            data = {"current": None, "sessions": {}}
-            self._save_sessions(data)
-            return data
+        self.session_store.data = self.session_store.load()
+        self.sessions = self.session_store.data
+        return self.sessions
 
     def _save_sessions(self, data=None):
-        if data is None:
-            data = self.sessions
-        with self._sessions_lock:
-            exc = None
-            tmp = self.sessions_path.with_suffix(self.sessions_path.suffix + f".{os.getpid()}.tmp")
-            for _ in range(20):
-                try:
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        json.dump(data, f, indent=2, ensure_ascii=False)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    os.replace(tmp, self.sessions_path)
-                    return
-                except PermissionError as e:
-                    exc = e
-                    time.sleep(0.25)
-                except OSError as e:
-                    exc = e
-                    time.sleep(0.25)
-            try:
-                if tmp.exists():
-                    tmp.unlink()
-            except OSError:
-                pass
-            print(f"  [WARN] sessions.json 暂时无法保存: {exc}")
+        if data is not None:
+            self.session_store.data = data
+            self.sessions = data
+        self.session_store.save()
 
     def _session_create(self, name=None):
-        sid = _generate_sid()
-        if not name:
-            name = f"新对话 {len(self.sessions['sessions']) + 1}"
-        self.sessions["sessions"][sid] = {
-            "name": name,
-            "created_at": datetime.now().isoformat(),
-            "conversation": [],
-        }
-        self.sessions["current"] = sid
-        self._save_sessions()
-        return sid
+        return self.session_store.create(name)
 
     def _session_delete(self, sid):
-        if sid not in self.sessions["sessions"]:
-            return
-        del self.sessions["sessions"][sid]
-        if self.sessions["current"] == sid:
-            remaining = list(self.sessions["sessions"].keys())
-            self.sessions["current"] = remaining[-1] if remaining else None
-        self._save_sessions()
+        self.session_store.delete(sid)
 
     def _session_switch(self, target):
-        if target in self.sessions["sessions"]:
-            self.sessions["current"] = target
-            self._save_sessions()
-            return True
-        if target.isdigit():
-            idx = int(target) - 1
-            keys = list(self.sessions["sessions"].keys())
-            if 0 <= idx < len(keys):
-                self.sessions["current"] = keys[idx]
-                self._save_sessions()
-                return True
-        return False
+        return self.session_store.switch(target)
 
     def _session_rename(self, sid, name):
-        if sid in self.sessions["sessions"]:
-            self.sessions["sessions"][sid]["name"] = name
-            self._save_sessions()
+        self.session_store.rename(sid, name)
 
     def _session_list_text(self):
-        lines = []
-        keys = list(self.sessions["sessions"].keys())
-        for i, sid in enumerate(keys, 1):
-            s = self.sessions["sessions"][sid]
-            marker = " <- 当前" if sid == self.sessions["current"] else ""
-            conv_len = len(s.get("conversation", [])) // 2
-            lines.append(f"  {i}. [{sid[:8]} {s['name']}] {conv_len}条对话{marker}")
-        return "\n".join(lines)
+        return self.session_store.list_text()
 
     def _session_current(self):
-        sid = self.sessions["current"]
-        if not sid or sid not in self.sessions["sessions"]:
-            sid = self._session_create()
-        return sid, self.sessions["sessions"][sid]
+        return self.session_store.current()
 
     # ── dedup helpers ────────────────────────────────────────────────
 
     def _combo_fingerprint(self, artists):
-        return hashlib.sha1(",".join(sorted(artists)).encode()).hexdigest()[:16]
+        return combo_fingerprint(artists)
 
     def _is_duplicate(self, artists):
-        return self._combo_fingerprint(artists) in self.history.get("combos", {})
+        return is_duplicate(self.history, artists)
 
     def _mark_generated(self, artists, output_path, prompt):
-        fp = self._combo_fingerprint(artists)
-        self.history.setdefault("combos", {})[fp] = {
-            "artists": artists, "generated_at": datetime.now().isoformat(),
-            "output_path": str(output_path), "prompt": prompt,
-        }
-        s = self.history.setdefault("stats", {})
-        s["total_generated"] = s.get("total_generated", 0) + 1
+        mark_generated(self.history, artists, output_path, prompt)
         self._save_history()
 
     def _get_base_name(self, artist):
-        return re.sub(r"_\([^)]+\)$", "", artist).strip()
+        return get_base_name(artist)
 
     def _filter_similar(self, candidates, pool):
-        if self.similarity_filter == "off":
-            return candidates
-        seen = set()
-        result = []
-        for a in candidates:
-            base = self._get_base_name(a)
-            if base not in seen:
-                seen.add(base)
-                result.append(a)
-        return result
+        return filter_similar(candidates, self.similarity_filter)
 
     # ── file helpers ─────────────────────────────────────────────────
 
     def _sanitize_filename(self, name):
-        return "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in name)
+        return sanitize_filename(name)
 
     def _create_output_dir(self):
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        d = self.script_dir / self.config["output"]["base_dir"] / f"{ts}_{self.mode}_test"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        return create_output_dir(self.script_dir, self.config, self.mode)
 
     def _save_image(self, img_data, path):
-        Image.open(BytesIO(base64.b64decode(img_data))).save(path, "PNG")
+        save_image(img_data, path)
 
     def _save_info_txt(self, artists, prompt, neg, path, seed):
-        c = self.config["generation"]
-        with open(path.with_suffix(".txt"), "w", encoding="utf-8") as f:
-            f.write(f"Prompt: {prompt}\nNegative: {neg}\nArtists: {', '.join(artists)}\n"
-                    f"Seed: {seed}\nSize: {c['width']}x{c['height']}\n"
-                    f"Steps: {c['steps']}  CFG: {c['cfg_scale']}  Sampler: {c.get('sampler','Euler a')}")
+        save_info_txt(self.config, artists, prompt, neg, path, seed)
 
     def _build_prompt(self, artists):
-        artists_str = ", ".join(a for a in artists)
-        template = self.config["prompt"]["template"]
-        if "{artists}" in template:
-            return template.replace("{artists}", artists_str)
-        return template + ", " + artists_str
+        return build_prompt(self.config, artists)
 
     def _load_artists(self):
-        p = self.script_dir / self.config["artists"]["list_file"]
-        if not p.exists():
-            print(f"Error: Artist list not found: {p}")
-            sys.exit(1)
-        with open(p, "r", encoding="utf-8") as f:
-            return [l.strip() for l in f if l.strip()]
+        return load_artists(self.script_dir, self.config)
 
     # ── selection strategies ─────────────────────────────────────────
 
     def _select_artists(self, artists_list, num_images):
-        m = {"single": self._select_single, "pair": self._select_pair,
-             "sequential": self._select_sequential, "weighted": self._select_weighted,
-             "combo": self._select_combo}
-        return m.get(self.mode, self._select_combo)(artists_list, num_images)
+        return self.artist_sampler.select(artists_list, num_images)
 
     def _select_combo(self, a, n):
-        results = []
-        for _ in range(n * 50):
-            if len(results) >= n:
-                break
-            k = min(random.randint(self.mode_min, self.mode_max), len(a))
-            c = random.sample(a, k)
-            if self.similarity_filter != "off":
-                c = self._filter_similar(c, a)
-                if len(c) < self.mode_min:
-                    continue
-            if self.dedup_enabled and not self.allow_resample and self._is_duplicate(c):
-                continue
-            results.append(c)
-        if len(results) < n:
-            print(f"Warning: Only {len(results)} unique combos out of {n}")
-        return results
+        return self.artist_sampler.select_combo(a, n)
 
     def _select_single(self, a, n):
-        pool = list(a)
-        random.shuffle(pool)
-        if self.dedup_enabled and not self.allow_resample:
-            deduped = [x for x in pool if not self._is_duplicate([x])]
-            if deduped:
-                pool = deduped
-        return [[x] for x in pool[:n]]
+        return self.artist_sampler.select_single(a, n)
 
     def _select_pair(self, a, n):
-        pairs = list(itertools.combinations(a, 2))
-        random.shuffle(pairs)
-        if self.dedup_enabled and not self.allow_resample:
-            pairs = [p for p in pairs if not self._is_duplicate(list(p))]
-        return [list(p) for p in pairs[:n]]
+        return self.artist_sampler.select_pair(a, n)
 
     def _select_sequential(self, a, n):
-        cs = self.config.get("mode_config", {}).get("sequential", {}).get("chunk_size", 5)
-        results = []
-        for i in range(0, len(a), cs):
-            chunk = a[i:i + cs]
-            if self.dedup_enabled and not self.allow_resample and self._is_duplicate(chunk):
-                continue
-            results.append(chunk)
-            if len(results) >= n:
-                break
-        return results[:n]
+        return self.artist_sampler.select_sequential(a, n)
 
     def _select_weighted(self, a, n):
-        w = None
-        wf = self.config.get("mode_config", {}).get("weighted", {}).get("weights_file")
-        if wf:
-            wp = self.script_dir / wf
-            if wp.exists():
-                wd = yaml.safe_load(open(wp, "r", encoding="utf-8"))
-                if isinstance(wd, dict):
-                    w = [wd.get(x, 1) for x in a]
-        results = []
-        for _ in range(n * 50):
-            if len(results) >= n:
-                break
-            k = min(random.randint(self.mode_min, self.mode_max), len(a))
-            try:
-                c = random.choices(a, weights=w, k=k) if w else random.sample(a, k)
-            except ValueError:
-                c = random.sample(a, k)
-            c = list(dict.fromkeys(c))
-            if len(c) < self.mode_min:
-                continue
-            if self.dedup_enabled and not self.allow_resample and self._is_duplicate(c):
-                continue
-            results.append(c)
-        return results
+        return self.artist_sampler.select_weighted(a, n)
 
     # ── image generation ─────────────────────────────────────────────
 
@@ -3368,163 +3153,10 @@ WebUI:      /skill_create (TODO)
     # ── dispatch ───────────────────────────────────────────────────
 
     def _dispatch(self, args):
-        if args.command == "dream":
-            self.cmd_dream(" ".join(args.description))
-        elif args.command == "run":
-            if getattr(args, "no_dedup", False):
-                self.dedup_enabled = False
-            if getattr(args, "mode", None):
-                self.mode = args.mode
-            if getattr(args, "num", None):
-                self.cli_args["num"] = args.num
-            if getattr(args, "resume", False):
-                self.allow_resample = False
-            self.run()
-        elif args.command == "status":
-            self.cmd_status()
-        elif args.command == "history":
-            self.cmd_history(last=args.last, search=getattr(args, "search", None))
-        elif args.command == "gallery":
-            self.cmd_gallery(run_name=getattr(args, "run_name", None),
-                             list_only=getattr(args, "list_only", False),
-                             regenerate=getattr(args, "regenerate", False))
-        elif args.command == "tags":
-            self.cmd_tags(args.keyword, getattr(args, "type", None))
-        elif args.command == "loras":
-            action = getattr(args, "action", "list")
-            if action == "list":
-                self.cmd_loras(search=getattr(args, "search", None))
-            else:
-                self.cmd_loras(action=action, name=getattr(args, "name", None), trigger=getattr(args, "trigger", None))
-        elif args.command == "artists":
-            if getattr(args, "count", False):
-                self.cmd_artists(count_only=True)
-            elif args.action == "gen":
-                artists = self._load_artists()
-                gen = set()
-                for v in self.history.get("combos", {}).values():
-                    for a in v.get("artists", []):
-                        gen.add(a)
-                print(f"{len(gen)} generated / {len(artists)} total")
-            else:
-                self.cmd_artists(search=getattr(args, "search", None))
-        elif args.command == "llm":
-            self.cmd_llm(args.action, getattr(args, "key", None), getattr(args, "value", None))
-        elif args.command == "models":
-            self.cmd_models(
-                action=getattr(args, "action", "list"),
-                role=getattr(args, "role", None),
-                model_key=getattr(args, "model_key", None),
-            )
-        elif args.command == "config":
-            if args.action == "set" and getattr(args, "key", None):
-                self.cmd_config("set", args.key, getattr(args, "value", None))
-            elif args.action == "get" and getattr(args, "key", None):
-                self.cmd_config("get", args.key)
-            else:
-                self.cmd_config("show")
-        elif args.command == "shell":
-            self.cmd_agent()
-        elif args.command == "webui":
-            self.cmd_webui(host=getattr(args, "host", "127.0.0.1"), port=int(args.port))
-        elif args.command == "telegram":
-            self.cmd_telegram(
-                action=args.action,
-                token=getattr(args, "token", None),
-                block=args.action == "start",
-            )
-        elif args.command == "update":
-            self.cmd_update(
-                apply=getattr(args, "apply", False),
-                deps=getattr(args, "deps", False),
-                remote=getattr(args, "remote", None),
-                branch=getattr(args, "branch", None),
-            )
-        elif args.command == "tagsite":
-            self.cmd_tagsite(*args.names)
-        elif args.command == "clear":
-            self.cmd_clear(args.target)
+        return dispatch(self, args)
 
 
 # ── CLI ───────────────────────────────────────────────────────────
-
-def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="sdbot - Stable Diffusion agent bot")
-    p.add_argument("--debug", action="store_true", help="Show traceback on errors")
-    sp = p.add_subparsers(dest="command")
-
-    r = sp.add_parser("run", help="Run generation")
-    r.add_argument("--mode", choices=["combo","single","pair","sequential","weighted"])
-    r.add_argument("--num", type=int)
-    r.add_argument("--resume", action="store_true")
-    r.add_argument("--no-dedup", action="store_true")
-
-    d = sp.add_parser("dream", help="Natural language → auto generate")
-    d.add_argument("description", nargs="+", help="Image description")
-
-    t = sp.add_parser("tags", help="Search Danbooru tags")
-    t.add_argument("keyword", help="Tag keyword")
-    t.add_argument("--type", choices=["general","artist","character","copyright"])
-
-    l = sp.add_parser("llm", help="LLM configuration")
-    l.add_argument("action", choices=["test","status","set"])
-    l.add_argument("key", nargs="?")
-    l.add_argument("value", nargs="?")
-
-    m = sp.add_parser("models", help="List / manage configured LLM models")
-    m.add_argument("action", nargs="?", default="list", choices=["list", "status", "switch", "test"])
-    m.add_argument("role", nargs="?", choices=["chat", "vision"])
-    m.add_argument("model_key", nargs="?")
-
-    sp.add_parser("status")
-    h = sp.add_parser("history")
-    h.add_argument("--last", type=int, default=20)
-    h.add_argument("--search")
-
-    g = sp.add_parser("gallery", help="View / manage galleries")
-    g.add_argument("run_name", nargs="?")
-    g.add_argument("--list", action="store_true", dest="list_only")
-    g.add_argument("--regenerate", action="store_true")
-
-    lo = sp.add_parser("loras", help="List / manage LoRAs")
-    lo.add_argument("action", nargs="?", default="list", choices=["list", "triggers", "set-trigger"])
-    lo.add_argument("name", nargs="?")
-    lo.add_argument("trigger", nargs="?")
-    lo.add_argument("--search")
-
-    a = sp.add_parser("artists")
-    a.add_argument("action", nargs="?", default="list", choices=["list","count","gen"])
-    a.add_argument("--search")
-    a.add_argument("--count", action="store_true")
-
-    c = sp.add_parser("config")
-    c.add_argument("action", nargs="?", default="show", choices=["show","set","get"])
-    c.add_argument("key", nargs="?")
-    c.add_argument("value", nargs="?")
-
-    cl = sp.add_parser("clear")
-    cl.add_argument("target", nargs="?", default="history", choices=["history","outputs"])
-
-    w = sp.add_parser("webui", help="Start web UI server")
-    w.add_argument("--port", type=int, default=7861)
-    w.add_argument("--host", default="127.0.0.1")
-
-    tg = sp.add_parser("telegram", help="Manage Telegram bot")
-    tg.add_argument("action", nargs="?", default="status", choices=["start","stop","status"])
-    tg.add_argument("--token", help="Override bot token")
-
-    up = sp.add_parser("update", help="Check or pull updates from GitHub")
-    up.add_argument("--check", action="store_true", help="Only check for updates (default)")
-    up.add_argument("--apply", action="store_true", help="Apply updates with git pull --ff-only")
-    up.add_argument("--deps", action="store_true", help="Run pip install -r requirements.txt after updating")
-    up.add_argument("--remote", help="Git remote name, default from config update.remote or origin")
-    up.add_argument("--branch", help="Git branch name, default from config update.branch or main")
-
-    ts = sp.add_parser("tagsite", help="Search character tags from downloadmost.com")
-    ts.add_argument("names", nargs="+", help="Character name(s)")
-
-    sp.add_parser("shell")
-    return p.parse_args(argv)
 
 
 def main():
