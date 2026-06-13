@@ -1,6 +1,9 @@
 import json
 
+from logging_setup import get_logger
+
 SUMMARY_THRESHOLD = 24
+logger = get_logger("agent.memory")
 
 
 class GlobalMemory:
@@ -49,6 +52,7 @@ class AgentMemory:
         conv.append({"role": "user", "content": user_input})
         conv.append({"role": "assistant", "content": json.dumps(result, ensure_ascii=False)})
         self.save_last_dream_params_from_result(result, session)
+        logger.debug("append_turn: conv_len=%d result_action=%s", len(conv), result.get("action") if isinstance(result, dict) else "?")
 
     def check_summarize(self, session):
         conv = session.get("conversation", [])
@@ -60,6 +64,7 @@ class AgentMemory:
         try:
             summary = self._summarize(old_part, session.get("summary", ""))
             session["summary"] = summary
+            logger.info("Summarized conversation: kept=%d summarized=%d", len(conv) - mid, mid)
         except Exception:
             pass
 

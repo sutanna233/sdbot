@@ -137,6 +137,34 @@ TOOL_SCHEMAS = {
         "triggers": ["telegram", "tg"],
         "param_hints": {"subaction": "start/stop/status。"},
     },
+    "daemon": {
+        "required": ["action"],
+        "allowed_params": {"action"},
+        "context_policy": "no_history",
+        "terminal": True,
+        "description": "管理系统后台守护进程。开机自启用 action=enable；查看状态用 action=status；启动/停止/重启对应 start/stop/restart。",
+        "triggers": ["开机自启", "后台运行", "守护进程", "守护", "daemon", "后台服务", "自启", "开机启动"],
+        "param_hints": {
+            "action": "必填。status(查看状态) / enable(安装并设为开机自启) / start(启动服务) / stop(停止) / restart(重启) / disable(关闭开机自启)。",
+        },
+        "examples": [
+            {
+                "user": "帮我设置开机自启",
+                "action": "daemon",
+                "params": {"action": "enable"},
+            },
+            {
+                "user": "后台启动了吗",
+                "action": "daemon",
+                "params": {"action": "status"},
+            },
+            {
+                "user": "重启一下后台服务",
+                "action": "daemon",
+                "params": {"action": "restart"},
+            },
+        ],
+    },
     "status": {
         "required": [], "allowed_params": set(), "context_policy": "system_state",
         "terminal": True,
@@ -303,6 +331,20 @@ TOOL_SCHEMAS = {
         "description": "列出苏丹娜记忆中所有与当前用户相关的信息。用户问'你记得什么'时使用。",
         "terminal": True,
         "triggers": ["你记得什么", "有什么记忆", "你都知道什么"],
+    },
+    "logs": {
+        "required": [],
+        "allowed_params": {"action", "level", "lines", "keyword"},
+        "context_policy": "no_history",
+        "terminal": True,
+        "description": "查看系统日志内容。支持按级别筛选（ERROR/WARNING/INFO/DEBUG）、关键词搜索、指定行数。",
+        "triggers": ["日志", "看看日志", "发生了什么", "报错", "错误", "异常", "最近", "查日志", "log"],
+        "param_hints": {
+            "action": "tail(默认)/path(显示日志路径)。",
+            "level": "筛选级别: ERROR/WARNING/INFO/DEBUG，为空则全部显示。",
+            "lines": "显示最近多少行，默认50。",
+            "keyword": "搜索关键词，只显示包含该词的行。",
+        },
     },
     "chat": {
         "required": ["reply"],

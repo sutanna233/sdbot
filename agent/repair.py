@@ -1,5 +1,9 @@
 import re
 
+from logging_setup import get_logger
+
+logger = get_logger("agent.repair")
+
 
 class ActionRepair:
     def __init__(self, host):
@@ -107,4 +111,7 @@ class ActionRepair:
                     chain[0]["params"] = params
                     if result.get("action") == "dream":
                         result["params"] = params
+        if result and result.get("action"):
+            logger.debug("repair: intent=%s action=%s has_chain=%s",
+                         intent.name, result["action"], bool(result.get("chain")))
         return result

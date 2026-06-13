@@ -1,3 +1,4 @@
+from logging_setup import get_logger
 from .context import ContextBuilder
 from .intent import IntentRouter
 from .memory import AgentMemory
@@ -5,6 +6,8 @@ from .planner import LLMPlanner
 from .repair import ActionRepair
 from .state import ConversationState
 from .validator import ActionValidator
+
+logger = get_logger("agent.pipeline")
 
 
 class AgentPipeline:
@@ -25,15 +28,19 @@ class AgentPipeline:
         state = self.state.get(session)
         resolved = self.state.resolve(user_input, state)
 
+        logger.info("process: source=%s input=%r", source, user_input[:80])
+
         artifact_result = self._handle_artifact_reference(session, user_input)
         if artifact_result:
             self.state.update_after_plan(session, user_input, artifact_result)
             self.memory.append_turn(session, user_input, artifact_result)
             self.memory.check_summarize(session)
             self.host._save_sessions()
+            logger.info("artifact reference matched: action=%s", artifact_result.get("action"))
             return artifact_result
 
         intent = self.router.route(user_input)
+        logger.info("Intent: name=%s slots=%s", intent.name, intent.slots)
         if intent.name != "tool_continue" and resolved.get("turn", {}).get("kind") in ("followup", "explain", "reaction", "selection", "cancel", "retry", "correction"):
             intent.name = "contextual_followup"
 
@@ -45,15 +52,18 @@ class AgentPipeline:
             self.memory.append_turn(session, user_input, direct)
             self.memory.check_summarize(session)
             self.host._save_sessions()
+            logger.info("direct followup handled: kind=%s", (resolved.get("turn") or {}).get("kind"))
             return direct
         if intent.name in ("continue_dream", "edit_dream") and not ctx.data.get("last_dream_params"):
             result = {"reply": "我还没有可续画的上一张，请先告诉我要画什么。", "action": "chat", "params": {}}
             self.memory.append_turn(session, user_input, result)
             self.host._save_sessions()
+            logger.info("no last_dream_params for continue/edit")
             return result
 
         agent_input = self.context.build_agent_input(intent, user_input, ctx)
         result = self.planner.plan(system, ctx.history, agent_input, intent=intent, ctx=ctx)
+        logger.info("Plan result: action=%s chain_len=%d", result.get("action"), len(result.get("chain") or []))
         if self._should_fallback_to_dream(intent, result):
             result = {
                 "reply": "好的，按你的描述准备生成。",
@@ -83,7 +93,9 @@ class AgentPipeline:
             choices = choices_state.get("choices") or []
             idx = (resolved.get("patch") or {}).get("selected_index")
             if idx is None or idx < 0 or idx >= len(choices):
-                return {"reply": "我没找到这个选项，请重新选择编号。", "action": "chat", "params": {}}
+                # 没有已保存的 choices 时, 让 LLM 根据对话上下文处理
+                # (例如切换模型时 LLM 把模型列表放在回复文本中, 未保存为 choices)
+                return None
             choice = choices[idx]
             chain = choice.get("chain") or []
             if not chain:

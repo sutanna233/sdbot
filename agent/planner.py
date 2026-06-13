@@ -1,6 +1,9 @@
 import json
 
+from logging_setup import get_logger
 from .schemas import TOOL_SCHEMAS
+
+logger = get_logger("agent.planner")
 
 
 class LLMPlanner:
@@ -8,8 +11,15 @@ class LLMPlanner:
         self.host = host
 
     def plan(self, system, history, agent_input, intent=None, ctx=None):
+        intent_name = getattr(intent, "name", "?")
+        logger.debug("plan: intent=%s input_len=%d history_len=%d",
+                     intent_name, len(agent_input), len(history))
         agent_input = self._with_schema(agent_input, intent, ctx=ctx)
-        result = self.host._llm().agent_chat(system, history, agent_input)
+        try:
+            result = self.host._llm().agent_chat(system, history, agent_input)
+        except Exception as e:
+            logger.error("plan failed for intent=%s: %s", intent_name, e, exc_info=True)
+            raise
         if not isinstance(result, dict) or "reply" not in result:
             result = self.host._llm().agent_chat(system, history, agent_input + " (请务必返回JSON)")
             if not isinstance(result, dict) or "reply" not in result:
@@ -130,7 +140,7 @@ class LLMPlanner:
         if name in ("continue_dream", "edit_dream"):
             return ["generation_info", "dream", "chat"]
         if name == "contextual_followup":
-            return ["chat", "dream", "tagsite", "tags", "generation_info", "gallery"]
+            return ["chat", "dream", "tagsite", "tags", "generation_info", "gallery", "models"]
         if name in ("switch_model", "query_model"):
             return ["models", "chat"]
         if name == "add_provider":
@@ -138,13 +148,13 @@ class LLMPlanner:
         if name == "tool_continue":
             return ["chat", "dream", "character_resolve", "character_confirm", "tagsite", "models", "add_provider", "file_read", "file_write", "web_fetch"]
         if name == "command":
-            return ["models", "add_provider", "status", "loras", "telegram", "webui", "gallery", "generation_info", "update", "clear",
+            return ["daemon", "logs", "models", "add_provider", "status", "loras", "telegram", "webui", "gallery", "generation_info", "update", "clear",
                      "history", "artists", "character_resolve", "character_confirm", "tagsite", "tags", "config_get", "config_set",
                      "session_list", "session_switch", "session_new", "skill_list", "skill_load",
                      "llm_status", "llm_test", "chat",
                      "memory_set", "memory_get", "memory_forget", "memory_list"]
         if name == "chat":
-            return ["chat", "status", "models", "gallery", "generation_info", "update", "history", "loras", "telegram",
+            return ["daemon", "logs", "chat", "status", "models", "gallery", "generation_info", "update", "history", "loras", "telegram",
                      "character_resolve", "character_confirm",
                      "memory_set", "memory_get", "memory_forget", "memory_list"]
         return ["dream", "models", "add_provider", "tagsite", "loras", "status", "chat"]

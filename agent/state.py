@@ -2,6 +2,10 @@ import json
 import re
 from datetime import datetime
 
+from logging_setup import get_logger
+
+logger = get_logger("agent.state")
+
 
 def _now():
     return datetime.now().isoformat(timespec="seconds")
@@ -110,10 +114,12 @@ class ConversationState:
                     "created_at": _now(),
                 }
                 state["active_task"] = self._task_from_choices(user_input, choices, self.STATUS_WAITING_CHOICE)
+                logger.info("State -> waiting_choice: %d choices", len(choices))
             else:
                 task = self._task_from_result(user_input, result, status="planning")
                 if task:
                     state["active_task"] = task
+                    logger.info("State -> planning: action=%s", result.get("action"))
         session["conversation_state"] = state
 
     def save_choices(self, session, user_input, choices):
@@ -142,6 +148,10 @@ class ConversationState:
             task["updated_at"] = _now()
             state["active_task"] = task
         session["conversation_state"] = state
+        if cancelled:
+            logger.info("State -> cancelled")
+        else:
+            logger.info("State -> executing (choice=%s)", index)
 
     def save_generation(self, session, generation):
         state = self.get(session)
@@ -197,7 +207,10 @@ class ConversationState:
         if action == "character_resolve":
             resolve_status = result.get("status") if isinstance(result, dict) else None
             if active.get("type") == "generation" and active.get("status") == self.STATUS_RESEARCHING:
-                active["status"] = self.STATUS_RESEARCH_DONE if resolve_status == "resolved" else self.STATUS_NEEDS_CHARACTER_CONFIRMATION
+                if resolve_status == "resolved" or resolve_status == "unresolved":
+                    active["status"] = self.STATUS_RESEARCH_DONE
+                else:
+                    active["status"] = self.STATUS_NEEDS_CHARACTER_CONFIRMATION
                 active["research"] = {
                     "tool": action,
                     "status": resolve_status or "unknown",
@@ -244,6 +257,8 @@ class ConversationState:
             "updated_at": _now(),
         }
         session["conversation_state"] = state
+        action = step.get("action") if isinstance(step, dict) else "?"
+        logger.info("State -> researching: step=%s subject=%s", action, params.get("names") or "-")
 
     def _is_emoji_only(self, text):
         stripped = re.sub(r"[\s\ufe0f\u200d]+", "", text)

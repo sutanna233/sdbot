@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}日志 - SD Artist Tester{% endblock %}
+{% block content %}
+<div class="log-header">
+  <h2>日志</h2>
+  <div class="log-controls">
+    <select id="log-level" onchange="reloadLogs()">
+      <option value="DEBUG">DEBUG</option>
+      <option value="INFO" selected>INFO</option>
+      <option value="WARNING">WARNING</option>
+      <option value="ERROR">ERROR</option>
+    </select>
+    <input type="text" id="log-search" placeholder="搜索关键词..." onkeyup="if(event.key==='Enter')reloadLogs()">
+    <select id="log-file" onchange="reloadLogs()">
+      <option value="sdbot.log">sdbot.log</option>
+    </select>
+    <label class="log-autorefresh">
+      <input type="checkbox" id="log-refresh" onchange="toggleAutoRefresh()" checked>
+      自动刷新
+    </label>
+    <button onclick="reloadLogs()" class="log-btn">刷新</button>
+  </div>
+  <div class="log-info" id="log-info"></div>
+</div>
+<pre class="log-container" id="log-entries">
+加载中...
+</pre>
+<script>
+let refreshTimer = null;
+
+function toggleAutoRefresh() {
+  if (document.getElementById('log-refresh').checked) {
+    reloadLogs();
+  } else {
+    clearTimeout(refreshTimer);
+  }
+}
+
+function reloadLogs() {
+  const level = document.getElementById('log-level').value;
+  const search = document.getElementById('log-search').value;
+  const source = document.getElementById('log-file').value;
+  const entriesEl = document.getElementById('log-entries');
+  const infoEl = document.getElementById('log-info');
+
+  fetch(`/api/logs?level=${level}&search=${encodeURIComponent(search)}&source=${source}&tail=500`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.files) {
+        const sel = document.getElementById('log-file');
+        const current = sel.value;
+        sel.innerHTML = data.files.map(f => `<option value="${f.name}">${f.name} (${(f.size/1024).toFixed(0)}KB)</option>`).join('');
+        sel.value = current;
+      }
+      infoEl.textContent = `显示 ${data.entries.length} 条 (共 ${data.total} 行)`;
+      if (data.entries.length === 0) {
+        entriesEl.innerHTML = '<span class="log-DEBUG">（无匹配条目）</span>';
+      } else {
+        entriesEl.innerHTML = data.entries.map(e =>
+          `<span class="log-entry log-${e.level}">${escapeHtml(e.line)}</span>`
+        ).join('\n');
+      }
+      if (document.getElementById('log-refresh').checked) {
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(reloadLogs, 5000);
+      }
+    })
+    .catch(err => {
+      entriesEl.innerHTML = `<span class="log-ERROR">加载失败: ${err}</span>`;
+    });
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+// Initial load
+reloadLogs();
+</script>
+{% endblock %}

@@ -114,6 +114,33 @@ def _test_llm(provider, base_url, model, api_key):
         return False
 
 
+def _fetch_models(base_url, api_key):
+    """Call /v1/models to discover available models."""
+    url = base_url.rstrip("/")
+    if not url.endswith("/v1"):
+        url += "/v1"
+    models_url = f"{url}/models"
+    try:
+        hdrs = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        resp = requests.get(models_url, headers=hdrs, timeout=15)
+        if resp.status_code != 200:
+            _warn(f"获取模型列表失败 (HTTP {resp.status_code})")
+            return []
+        data = resp.json()
+        raw_models = []
+        if isinstance(data, list):
+            raw_models = [(m.get("id") or m.get("model")) if isinstance(m, dict) else str(m) for m in data]
+        elif isinstance(data, dict) and "data" in data:
+            raw_models = [(m.get("id") or m.get("model")) if isinstance(m, dict) else str(m) for m in data["data"]]
+        models = list(dict.fromkeys(str(m).strip() for m in raw_models if m))
+        if models:
+            _ok(f"发现 {len(models)} 个可用模型")
+        return models
+    except Exception as e:
+        _warn(f"无法获取模型列表: {e}")
+        return []
+
+
 # ── config writer ─────────────────────────────────────────────────
 
 EXAMPLE_PATH = Path(__file__).parent / "config.example.yaml"
@@ -128,9 +155,8 @@ def _load_example():
 
 def _write_config(data):
     path = Path(__file__).parent / "config.yaml"
-    store = ConfigStore(path)
-    store.data = data
-    store.save()
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
     _ok(f"配置文件已写入: {path}")
     return path
 
@@ -228,38 +254,116 @@ def run_wizard():
     preset = _pick_provider()
 
     if choice := preset.get("provider"):
-        config["llm"] = {
-            "provider": preset["provider"],
-            "base_url": preset["base_url"],
-            "model": preset["model"],
-        }
+        llm_provider = preset["provider"]
+        llm_base_url = preset["base_url"]
+        llm_model = preset["model"]
     else:
-        config["llm"] = {
-            "provider": _ask("provider 名称 (如 deepseek/openai)", default="deepseek"),
-            "base_url": _ask("API 地址", default="https://api.deepseek.com"),
-            "model": _ask("模型名", default="deepseek-chat"),
-        }
+        llm_provider = _ask("provider 名称 (如 deepseek/openai)", default="deepseek")
+        llm_base_url = _ask("API 地址", default="https://api.deepseek.com")
+        llm_model = _ask("模型名", default="deepseek-chat")
 
     api_key = _ask("API Key")
-    config["llm"]["api_key"] = api_key
+
+    # ── Discover available models via /v1/models ──────────────
+    discovered_models = _fetch_models(llm_base_url, api_key)
+    selected_models = []
+
+    if discovered_models and _confirm("  发现可用模型，要选择使用哪个吗", default=True):
+        print(f"\n  {BOLD}可用模型列表:{RESET}")
+        for i, m in enumerate(discovered_models, 1):
+            print(f"  {i:2d}. {m}")
+        print(f"  {'─' * 40}")
+        choice = _ask("请选择编号（可多选，逗号分隔，如 1,3,5）", default="1")
+        indices = []
+        for part in choice.split(","):
+            part = part.strip()
+            if part.isdigit():
+                idx = int(part) - 1
+                if 0 <= idx < len(discovered_models):
+                    indices.append(idx)
+        if indices:
+            selected_models = [discovered_models[i] for i in dict.fromkeys(indices)]
+        else:
+            selected_models = [discovered_models[0]]
+    else:
+        # Fallback: use preset model or manual input
+        selected_models = [llm_model]
+
+    # Use first selected as primary chat model
+    primary_model = selected_models[0]
+    config["llm"] = {
+        "provider": llm_provider,
+        "base_url": llm_base_url,
+        "model": primary_model,
+        "api_key": api_key,
+    }
 
     if _confirm("  测试连接", default=True):
-        _test_llm(config["llm"]["provider"], config["llm"]["base_url"], config["llm"]["model"], api_key)
+        _test_llm(llm_provider, llm_base_url, primary_model, api_key)
 
-    # Build models entry
-    model_key = f'{config["llm"]["provider"]}_{config["llm"]["model"].replace("/", "_")}'
-    config.setdefault("models", {})[model_key] = {
-        "_key": model_key,
-        "provider": config["llm"]["provider"],
-        "base_url": config["llm"]["base_url"],
-        "model": config["llm"]["model"],
-        "api_key": api_key,
-        "capabilities": ["chat"],
-    }
-    config.setdefault("selection", {})["chat"] = model_key
+    # Register all selected models
+    config.setdefault("models", {})
+    selection_chat_set = False
+    for model_name in selected_models:
+        m_key = f"{llm_provider}_{model_name.replace('/', '_')}"
+        config["models"][m_key] = {
+            "_key": m_key,
+            "provider": llm_provider,
+            "base_url": llm_base_url,
+            "model": model_name,
+            "api_key": api_key,
+            "capabilities": ["chat"],
+        }
+        if not selection_chat_set:
+            config.setdefault("selection", {})["chat"] = m_key
+            selection_chat_set = True
 
-    # ── Step 3: Telegram (optional) ───────────────────────────
-    print(f"\n  {BOLD}【3/4】Telegram Bot (可选){RESET}")
+    # Propagate API key to existing models of the same provider
+    for m_key, m_cfg in config.get("models", {}).items():
+        if m_cfg.get("provider") == llm_provider and not m_cfg.get("api_key"):
+            m_cfg["api_key"] = api_key
+            _info(f"已同步 API Key 到 {m_key}")
+
+    # ── Vision model (optional) ──────────────────────────────────
+    print(f"\n  {BOLD}【可选】识图模型配置{RESET}")
+    _info("如果不使用识图功能（如看图分析），直接 Enter 跳过")
+    if _confirm("  需要配置识图模型吗", default=False):
+        vision_provider = _ask("  provider 名称", default=llm_provider)
+        vision_base = _ask("  API 地址", default=llm_base_url)
+        # Try to discover vision-capable models
+        vision_models = _fetch_models(vision_base, api_key)
+        vision_model_name = ""
+        if vision_models:
+            print(f"\n  {BOLD}可用模型:{RESET}")
+            for i, m in enumerate(vision_models, 1):
+                print(f"  {i:2d}. {m}")
+            print(f"  {'─' * 40}")
+            v_choice = _ask("请选择编号", default="1")
+            if v_choice.isdigit():
+                idx = int(v_choice) - 1
+                if 0 <= idx < len(vision_models):
+                    vision_model_name = vision_models[idx]
+        if not vision_model_name:
+            vision_model_name = _ask("  模型名", default="gpt-4o-mini")
+        vision_ak = _ask("  API Key (留空继承主模型 Key)")
+        if not vision_ak:
+            vision_ak = api_key
+        v_key = f"{vision_provider}_{vision_model_name.replace('/', '_')}"
+        config.setdefault("models", {})[v_key] = {
+            "_key": v_key,
+            "provider": vision_provider,
+            "base_url": vision_base,
+            "model": vision_model_name,
+            "api_key": vision_ak,
+            "capabilities": ["chat", "vision"],
+        }
+        config.setdefault("selection", {})["vision"] = v_key
+        _ok(f"识图模型: {v_key}")
+        if _confirm("  测试识图模型", default=True):
+            _test_llm(vision_provider, vision_base, vision_model_name, vision_ak)
+
+    # ── Step 4: Telegram (optional) ───────────────────────────
+    print(f"\n  {BOLD}【4/5】Telegram Bot (可选){RESET}")
     _info("如不需要 Telegram 功能，直接按 Enter 跳过")
     tg_token = _ask("Telegram Bot Token (留空跳过)")
     if tg_token:
@@ -267,8 +371,8 @@ def run_wizard():
         config["telegram"]["allowed_users"] = []
         _ok("Telegram 已配置，可在 config.yaml 中设置 allowed_users")
 
-    # ── Step 4: Generation defaults ───────────────────────────
-    print(f"\n  {BOLD}【4/4】生成参数默认值{RESET}")
+    # ── Step 5: Generation defaults ───────────────────────────
+    print(f"\n  {BOLD}【5/5】生成参数默认值{RESET}")
     _info("以下参数可在后续使用中随时调整")
     gen = config.setdefault("generation", {})
     gen["width"] = int(_ask("默认宽度", default=str(gen.get("width", 1024))))
@@ -285,6 +389,11 @@ def run_wizard():
     print(f"  LLM:        {config['llm']['provider']} / {config['llm']['model']}")
     print(f"  Telegram:   {'已配置' if config.get('telegram', {}).get('token') else '跳过'}")
     print(f"  生成:       {gen['width']}x{gen['height']}  {gen['steps']}steps  CFG {gen['cfg_scale']}  {gen['sampler']}")
+    models_count = len(config.get("models", {}))
+    print(f"  模型数:     {models_count} 个")
+    for m_key, m_cfg in config.get("models", {}).items():
+        caps = ",".join(m_cfg.get("capabilities", ["chat"]))
+        print(f"               {m_key}  [{caps}]")
     print()
 
     if _confirm("确认写入配置", default=True):

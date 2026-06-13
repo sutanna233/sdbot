@@ -26,6 +26,7 @@ def create_app(tester=None):
     app.config["tester"] = tester or SDArtistTester()
     app.config["outputs_dir"] = SCRIPT_DIR / app.config["tester"].config["output"]["base_dir"]
     app.config["outputs_dir"].mkdir(parents=True, exist_ok=True)
+    app.config["log_dir"] = getattr(app.config["tester"], "_log_dir", SCRIPT_DIR / "logs")
     return app
 
 
@@ -221,6 +222,10 @@ def register_routes(app, job_queue):
     @app.route("/config")
     def config():
         return render_template("config.html")
+
+    @app.route("/logs")
+    def logs():
+        return render_template("logs.html")
 
     @app.route("/skills")
     def skills():
@@ -630,6 +635,49 @@ def register_routes(app, job_queue):
             return jsonify({"error": err}), 404
         shutil.rmtree(path.parent)
         return jsonify({"ok": True, "skills": _skill_list_data()})
+
+    @app.route("/api/logs")
+    def api_logs():
+        log_dir = Path(app.config.get("log_dir", SCRIPT_DIR / "logs"))
+        level = request.args.get("level", "DEBUG")
+        search = request.args.get("search", "")
+        tail = int(request.args.get("tail", 200))
+        source = request.args.get("source", "sdbot.log")
+
+        level_order = {"CRITICAL": 0, "ERROR": 1, "WARNING": 2, "INFO": 3, "DEBUG": 4}
+        min_level = level_order.get(level.upper(), 4)
+
+        # List available log files
+        log_files = []
+        if log_dir.exists():
+            log_files = sorted(log_dir.glob("*.log*"), reverse=True)[:20]
+        files_info = [{"name": f.name, "size": f.stat().st_size} for f in log_files]
+
+        entries = []
+        log_file = log_dir / source
+        if log_file.exists():
+            try:
+                with open(log_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                lines = content.splitlines()
+                total = len(lines)
+                for line in lines[-tail:]:
+                    line_level = "DEBUG"
+                    for lv in ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"]:
+                        if f"[{lv}]" in line:
+                            line_level = lv
+                            break
+                    if level_order.get(line_level, 4) > min_level:
+                        continue
+                    if search and search.lower() not in line.lower():
+                        continue
+                    entries.append({"line": line, "level": line_level})
+            except Exception as e:
+                entries.append({"line": f"[ERR] 读取日志失败: {e}", "level": "ERROR"})
+        else:
+            entries.append({"line": f"[INFO] 日志文件不存在: {log_file}", "level": "INFO"})
+
+        return jsonify({"entries": entries, "files": files_info, "total": len(lines) if log_file.exists() else 0})
 
     @app.route("/api/stats")
     def api_stats():

@@ -4,8 +4,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-logger = logging.getLogger(__name__)
+from logging_setup import get_logger
+logger = get_logger("telegram")
 
 
 class TelegramBot:
@@ -298,20 +298,10 @@ class TelegramBot:
     def _execute_chain_sync(self, chat_id, chain):
         loop = self._loop
         bot = self.application.bot
-        status_msg_id = None
 
         async def _send(text):
-            nonlocal status_msg_id
-            if status_msg_id:
-                try:
-                    m = await bot.edit_message_text(text, chat_id=chat_id, message_id=status_msg_id)
-                    status_msg_id = m.message_id
-                except Exception:
-                    m = await bot.send_message(chat_id, text)
-                    status_msg_id = m.message_id
-            else:
-                m = await bot.send_message(chat_id, text)
-                status_msg_id = m.message_id
+            """发送一条新消息，不编辑已有消息。"""
+            await bot.send_message(chat_id, text)
 
         async def _send_result(batch_name):
             output_dir = Path(self.tester.script_dir) / self.tester.config["output"]["base_dir"]
@@ -365,9 +355,14 @@ class TelegramBot:
                     on_error=on_error,
                 )
 
-            last_run = getattr(self.tester, "last_run_dir", None)
-            if last_run:
-                _run_coro(_send_result(last_run.name))
+            # 只在链中包含 dream 动作时才发送图片结果
+            has_dream = any(s.get("action") == "dream" for s in (chain or []))
+            if has_dream:
+                last_run = getattr(self.tester, "last_run_dir", None)
+                if last_run:
+                    _run_coro(_send_result(last_run.name))
+                else:
+                    _run_coro(_send("执行完毕"))
             else:
                 _run_coro(_send("执行完毕"))
 

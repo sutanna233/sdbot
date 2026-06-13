@@ -1,6 +1,10 @@
 import sys
 from io import StringIO
 
+from logging_setup import get_logger
+
+logger = get_logger("tools.executor")
+
 
 class ToolExecutor:
     def __init__(self, host, registry=None):
@@ -9,6 +13,7 @@ class ToolExecutor:
 
     def execute(self, action, params=None):
         params = params or {}
+        logger.info("Execute: action=%s params_keys=%s", action, list(params.keys()))
         return self._capture(action, params, lambda: self.execute_raw(action, params))
 
     def execute_raw(self, action, params=None):
@@ -16,17 +21,24 @@ class ToolExecutor:
         if self.registry:
             handler = self.registry.get(action)
             if handler:
-                return handler(params)
+                result = handler(params)
+                logger.debug("Execute raw: action=%s result_ok=%s", action,
+                             result.get("ok") if isinstance(result, dict) else "?")
+                return result
         self.host._execute_action_raw(action, params)
         return None
 
     def execute_chain(self, chain):
         results = []
-        for step in chain:
+        for i, step in enumerate(chain):
             result = self.execute(step.get("action"), step.get("params", {}))
             results.append(result)
-            if not result.get("ok", True):
+            ok = result.get("ok", True)
+            if not ok:
+                logger.warning("Chain step %d failed: action=%s error=%s",
+                               i, step.get("action"), result.get("error"))
                 break
+        logger.info("Chain executed: %d/%d steps completed", len(results), len(chain))
         return results
 
     def _capture(self, action, params, fn):

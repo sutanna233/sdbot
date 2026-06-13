@@ -80,4 +80,9 @@ def parse_args(argv=None):
     subparsers.add_parser("setup", help="Run interactive first-time setup wizard")
 
     subparsers.add_parser("shell")
+
+    daemon = subparsers.add_parser("daemon", help="Start all services (WebUI + Telegram) as background daemon")
+    daemon.add_argument("--port", type=int, default=7861)
+    daemon.add_argument("--host", default="127.0.0.1")
+
     return parser.parse_args(argv)

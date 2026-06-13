@@ -1,0 +1,33 @@
+[Unit]
+Description=sdbot - SD WebUI Agent Daemon
+Documentation=https://github.com/sutanna233/sdbot
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/sdbot
+
+# 优先使用虚拟环境，没有则用系统 Python
+ExecStart=/opt/sdbot/.venv/bin/python sdbot.py daemon --host 127.0.0.1 --port 7861
+ExecReload=/bin/kill -HUP $MAINPID
+
+# 守护进程退出后自动重启
+Restart=on-failure
+RestartSec=5
+
+# 防止生成的文件权限问题
+UMask=0022
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

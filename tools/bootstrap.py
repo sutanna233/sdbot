@@ -1,3 +1,5 @@
+from .daemon import DaemonTool
+from .logs import LogsTool
 from .config import ClearTool, ConfigTool, LLMTool
 from .characters import CharacterConfirmTool, CharacterResolveTool
 from .dream import DreamTool, GenerationInfoTool
@@ -29,6 +31,8 @@ def build_tool_registry(host):
     registry.register("character_confirm", CharacterConfirmTool(host))
     registry.register("loras", LorasTool(host))
     registry.register("telegram", TelegramTool(host))
+    registry.register("daemon", DaemonTool(host))
+    registry.register("logs", LogsTool(host))
     registry.register("status", StatusTool(host))
     registry.register("history", HistoryTool(host))
     registry.register("artists", ArtistsTool(host))

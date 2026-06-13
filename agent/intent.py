@@ -1,6 +1,9 @@
 import re
 
+from logging_setup import get_logger
 from .types import Intent
+
+logger = get_logger("agent.intent")
 
 
 class IntentRouter:
@@ -19,6 +22,7 @@ class IntentRouter:
     def route(self, user_input):
         text = (user_input or "").strip()
         lower = text.lower()
+        logger.debug("route: input=%r", text[:60])
         if text.startswith("继续。基于上一步的工具输出决定下一步"):
             return Intent("tool_continue")
         if self._provider_intent(text, lower):
@@ -38,7 +42,9 @@ class IntentRouter:
             return Intent("new_dream")
         cmd_intent = self._command_intent(text, lower)
         if cmd_intent:
+            logger.debug("route -> %s (sub_intent=%s)", cmd_intent.name, cmd_intent.slots)
             return cmd_intent
+        logger.debug("route -> chat (fallback)")
         return Intent("chat")
 
     def _model_intent(self, text):
@@ -119,6 +125,14 @@ class IntentRouter:
             return Intent("command", slots={"sub_intent": "session"})
         if "config" in lower or "配置" in text:
             return Intent("command", slots={"sub_intent": "config"})
+        if any(k in text for k in ("开机自启", "开机启动", "后台运行", "后台服务", "守护进程", "守护")):
+            return Intent("command", slots={"sub_intent": "daemon"})
+        if any(k in lower for k in ("daemon", "systemctl", "systemd")):
+            return Intent("command", slots={"sub_intent": "daemon"})
+        if any(k in text for k in ("日志", "报错", "异常", "最近发生", "查日志", "看日志")):
+            return Intent("command", slots={"sub_intent": "logs"})
+        if any(k in lower for k in ("error", "错误")):
+            return Intent("command", slots={"sub_intent": "logs"})
         return None
 
     def _looks_like_clear(self, text, lower):

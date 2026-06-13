@@ -1,8 +1,9 @@
-import re, json, time, logging
+import re, json, time
 from pathlib import Path
 import requests
 
-logger = logging.getLogger(__name__)
+from logging_setup import get_logger
+logger = get_logger("tagsite")
 
 BASE_URL = "https://www.downloadmost.com/NoobAI-XL/danbooru-character/"
 SEARCH_URL = BASE_URL + "search.asp"

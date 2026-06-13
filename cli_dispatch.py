@@ -58,6 +58,8 @@ def dispatch(tester, args):
             tester.cmd_config("show")
     elif args.command == "shell":
         tester.cmd_agent()
+    elif args.command == "daemon":
+        tester.cmd_daemon(host=getattr(args, "host", "127.0.0.1"), port=args.port)
     elif args.command == "webui":
         tester.cmd_webui(host=getattr(args, "host", "127.0.0.1"), port=int(args.port))
     elif args.command == "telegram":

@@ -1,6 +1,9 @@
 import json
 
+from logging_setup import get_logger
 from .types import AgentContext
+
+logger = get_logger("agent.context")
 
 
 class ContextBuilder:
@@ -13,6 +16,8 @@ class ContextBuilder:
         return dict(params) if isinstance(params, dict) else {}
 
     def build(self, intent, user_input, session, conversation, use_context=None, resolved=None):
+        logger.debug("build: intent=%s use_context=%s conv_len=%d",
+                     intent.name, use_context, len(conversation or []))
         state = session.get("conversation_state") or {}
         data = {
             "conversation_state": state,

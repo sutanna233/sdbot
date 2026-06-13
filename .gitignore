@@ -18,6 +18,7 @@ weights.yaml
 _dream_artists.txt
 
 outputs/
+logs/
 *.log
 *.baiduyun.uploading.cfg
 
