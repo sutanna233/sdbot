@@ -1,4 +1,8 @@
-from generate_artists import main
+from generate_artists import main as _main
+
+
+def main():
+    _main()
 
 
 if __name__ == "__main__":

@@ -3161,6 +3161,17 @@ WebUI:      /skill_create (TODO)
 
 def main():
     args = parse_args()
+
+    # Setup / first-time wizard  ────────────────────────────────
+    config_path = Path(__file__).parent / "config.yaml"
+    if args.command == "setup" or not config_path.exists():
+        from setup_wizard import run_wizard
+        if not run_wizard():
+            sys.exit(0)
+        if args.command == "setup":
+            print("  配置完成，可使用 python sdbot.py shell 启动")
+            sys.exit(0)
+
     if not args.command:
         args.command = "shell"
     try:

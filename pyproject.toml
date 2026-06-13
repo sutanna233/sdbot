@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "sdbot"
+version = "0.1.0"
+description = "Stable Diffusion AI drawing assistant"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+sdbot = "sdbot:main"

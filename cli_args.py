@@ -77,5 +77,7 @@ def parse_args(argv=None):
     tagsite = subparsers.add_parser("tagsite", help="Search character tags from downloadmost.com")
     tagsite.add_argument("names", nargs="+", help="Character name(s)")
 
+    subparsers.add_parser("setup", help="Run interactive first-time setup wizard")
+
     subparsers.add_parser("shell")
     return parser.parse_args(argv)
