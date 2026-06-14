@@ -139,8 +139,10 @@ class AgentPipeline:
             return {"reply": self.state.describe_artifact(artifact or self.state._artifact_from_generation(generation)), "action": "chat", "params": {}}
         if any(k in text for k in ("完整提示词", "提示词")):
             return {"reply": self._format_generation_info(generation, artifact, "prompt"), "action": "chat", "params": {}}
-        if any(k in text for k in ("输出目录", "输出文件夹", "保存在哪", "在哪个文件夹")):
-            return {"reply": self._format_generation_info(generation, artifact, "path"), "action": "chat", "params": {}}
+        # 如果包含"里面"表示想浏览目录内容，不走 artifact 快捷回复
+        if "里面" not in text:
+            if any(k in text for k in ("输出目录", "输出文件夹", "保存在哪", "在哪个文件夹")):
+                return {"reply": self._format_generation_info(generation, artifact, "path"), "action": "chat", "params": {}}
         return None
 
     def _format_generation_info(self, generation, artifact, detail):

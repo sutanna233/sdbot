@@ -1798,8 +1798,8 @@ h1{{font-size:18px;margin-bottom:4px}}
         except Exception as e:
             print(f"  [ERR] 写入失败: {e}")
 
-    def cmd_file_list(self, path=".", pattern=None, max_count=100):
-        base, err = self._resolve_path(path or ".")
+    def cmd_file_list(self, path="./outputs", pattern=None, max_count=100):
+        base, err = self._resolve_path(path or "./outputs")
         if err:
             print(f"  [ERR] {err}")
             return

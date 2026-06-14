@@ -162,7 +162,7 @@ class ActionValidator:
         elif action == "web_fetch":
             params["format"] = params.get("format") or "text"
         elif action == "file_list":
-            params["path"] = params.get("path") or "."
+            params["path"] = params.get("path") or "./outputs"
             params["max_count"] = params.get("max_count") or 100
         elif action == "file_find":
             params["pattern"] = params.get("pattern") or "*"

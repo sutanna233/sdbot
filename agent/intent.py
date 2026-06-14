@@ -30,6 +30,10 @@ class IntentRouter:
         model_intent = self._model_intent(text)
         if model_intent:
             return model_intent
+        # 文件/目录浏览（必须在"输出目录"→generation_info 之前）
+        if re.search(r"(看看|查看|浏览|显示|列出|展示)\s*(目录|文件夹|文件|里面|内容)", text) or \
+           any(k in text for k in ("里面有什么", "目录里有什么", "文件夹里", "列出文件", "列文件")):
+            return Intent("command", slots={"sub_intent": "file_list"})
         if re.search(r"(再画|再来|继续|继续画|再生成)\s*\d*\s*张?", text):
             return Intent("continue_dream")
         if any(k in text for k in ("完整提示词", "提示词", "生成参数", "输出目录", "输出文件夹", "刚才生成", "刚刚生成")):

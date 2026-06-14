@@ -1,5 +1,28 @@
 import os, sys, json, threading, asyncio, logging, time
 from pathlib import Path
+
+# ── 修复 httpx/httpcore TLS 连接问题 ──
+# httpx/httpcore 内部引用了 ssl.create_default_context 的本地副本，
+# 所以 patch httpx.create_ssl_context 无效，必须直接在 ssl 源头 patch。
+# 修复内容：设置 ALPN http/1.1，否则中间设备可能随机断开连接。
+import ssl as _ssl
+
+_orig_ssl_create = _ssl.create_default_context
+
+def _patched_ssl_context(*a, **kw):
+    ctx = _orig_ssl_create(*a, **kw)
+    try:
+        ctx.set_alpn_protocols(["http/1.1"])
+    except Exception:
+        pass
+    return ctx
+
+_ssl.create_default_context = _patched_ssl_context
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import NetworkError
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import NetworkError
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
@@ -59,11 +82,17 @@ class TelegramBot:
         self._loop = asyncio.get_running_loop()
         await app.initialize()
         await app.start()
-        await app.updater.start_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-            error_callback=self._on_polling_error,
-        )
+        # start_polling 在初始连接失败时会抛出异常，
+        # 我们捕获它让 run() 的重试循环来处理
+        try:
+            await app.updater.start_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                error_callback=self._on_polling_error,
+            )
+        except Exception as e:
+            logger.warning("Telegram start_polling failed: %s", e)
+            raise
         while not self._stop_event.is_set():
             await asyncio.sleep(0.5)
         await app.updater.stop()
@@ -72,11 +101,14 @@ class TelegramBot:
 
     def run(self):
         self._stop_event.clear()
-        try:
-            asyncio.run(self._run_async())
-        except Exception as e:
-            self.last_error = str(e)
-            logger.error("Telegram bot stopped: %s", e)
+        while not self._stop_event.is_set():
+            try:
+                asyncio.run(self._run_async())
+            except Exception as e:
+                self.last_error = str(e)
+                logger.error("Telegram bot stopped: %s — restarting in 5s", e)
+            if not self._stop_event.is_set():
+                time.sleep(5)
 
     def stop(self):
         self._stop_event.set()
@@ -338,8 +370,12 @@ class TelegramBot:
                 _run_coro(_send(f"[{i}/{total}] {desc}"))
 
             def on_success(step, action_result):
+                output = action_result.get("output", [])
                 summary = action_result.get("summary", "")
-                if summary:
+                if len(output) > 1:
+                    for ln in output:
+                        _run_coro(_send(f"  {ln}"))
+                elif summary:
                     _run_coro(_send(f"  ✓ {summary}"))
 
             def on_error(step, action_result):
