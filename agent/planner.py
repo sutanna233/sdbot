@@ -45,6 +45,10 @@ class LLMPlanner:
                 "必须使用 memory_list；用户询问某条具体记忆时使用 memory_get。"
                 "不要用 chat 回复已收到、已处理或系统规范说明。"
             )
+        # 意图分析提示的 sub_intent 作为优先级提示传给 LLM
+        sub = getattr(intent, "slots", {}).get("sub_intent") if intent else None
+        if sub:
+            extra_rules += f"\n用户意图分析结果：请求的操作是 {sub}。请优先使用 {sub} action，除非明显不适合。\n"
         choice_rules = self._choice_rules(intent, ctx)
         return (
             "[可用工具参数 schema]\n"
@@ -152,11 +156,13 @@ class LLMPlanner:
                      "history", "artists", "character_resolve", "character_confirm", "tagsite", "tags", "config_get", "config_set",
                      "session_list", "session_switch", "session_new", "skill_list", "skill_load",
                      "llm_status", "llm_test", "chat",
-                     "memory_set", "memory_get", "memory_forget", "memory_list"]
+                     "memory_set", "memory_get", "memory_forget", "memory_list",
+                     "file_list", "file_find", "file_read"]
         if name == "chat":
             return ["daemon", "logs", "chat", "status", "models", "gallery", "generation_info", "update", "history", "loras", "telegram",
                      "character_resolve", "character_confirm",
-                     "memory_set", "memory_get", "memory_forget", "memory_list"]
+                     "memory_set", "memory_get", "memory_forget", "memory_list",
+                     "file_list", "file_find", "file_read"]
         return ["dream", "models", "add_provider", "tagsite", "loras", "status", "chat"]
 
     def _schema_for(self, name):

@@ -328,6 +328,8 @@ class ModelClient:
         raise RuntimeError("LLM 未返回可用转换结果")
 
     def agent_chat(self, system, conversation, user_input):
+        # 清理输入中的非法代理对字符（lone surrogates），防止 utf-8 encode 崩溃
+        user_input = user_input.encode("utf-8", errors="replace").decode("utf-8")
         encoded = base64.b64encode(user_input.encode()).decode()
         strategies = [
             {"sys": system, "user": user_input},

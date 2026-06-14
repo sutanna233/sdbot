@@ -260,11 +260,17 @@ TOOL_SCHEMAS = {
     "file_list": {
         "required": [], "allowed_params": {"path", "pattern", "max_count"}, "context_policy": "no_history",
         "terminal": True,
+        "description": "列出指定目录下的文件和子目录。path 为空自动用输出目录。适用于用户想查看输出目录、看文件夹内容、目录里有什么等场景。",
+        "triggers": ["里面有什么", "列出文件", "看目录", "输出目录", "文件夹"],
+        "param_hints": {"path": "要列出内容的目录路径", "pattern": "文件过滤模式，如 *.png", "max_count": "最多返回多少个文件"},
     },
     "file_delete": {"required": ["path"], "allowed_params": {"path", "confirm_yes"}, "context_policy": "no_history"},
     "file_find": {
         "required": [], "allowed_params": {"pattern", "contains", "max_count"}, "context_policy": "no_history",
         "terminal": True,
+        "description": "递归搜索匹配的文件。按文件名 pattern（glob）和/或内容 contains（文本匹配）搜索。",
+        "triggers": ["搜索文件", "查找文件", "找文件"],
+        "param_hints": {"pattern": "文件名 glob，如 *.log", "contains": "文件内容匹配的文本", "max_count": "最多返回多少个文件"},
     },
     "web_fetch": {
         "required": ["url"], "allowed_params": {"url", "format", "max_length"}, "context_policy": "no_history",

@@ -68,7 +68,9 @@ class TUIController:
 
     def ask(self, prompt: str = "你") -> str:
         label = "你" if prompt in ("input", "你", "") else prompt
-        return self.console.input(f"[bold #D88CFF]{label} > [/]").strip()
+        raw = self.console.input(f"[bold #D88CFF]{label} > [/]").strip()
+        # 清除非法代理对字符，防止后续 utf-8 encode 崩溃
+        return raw.encode("utf-8", errors="replace").decode("utf-8")
 
     def confirm(self, steps: list[tuple], phrase: str = "", risk: str = "info") -> str:
         title = "危险操作" if risk == "high" else "行动计划"
